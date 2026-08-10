@@ -18,13 +18,14 @@ class CustomerResource extends JsonResource
             'id'              => $this->id,
             'name'            => $this->name,
             'phone'           => $this->phone,
+            'display_label'   => $this->phone ? "{$this->name} - {$this->phone}" : $this->name,
             'email'           => $this->email,
             'credit_limit'    => $this->credit_limit,
             'current_balance' => $this->current_balance,
             'account_id'      => $this->account_id,
-            'price_list_id'   => $this->price_list_id, // [الإضافة الحالية]: لتمرير معرف الفئة للواجهة
+            'price_list_id'   => $this->price_list_id,
 
-            // [الإضافة الحالية]: جلب تفاصيل فئة الأسعار المرتبطة بالعميل في حال تم عمل Eager Loading لها
+            // جلب تفاصيل فئة الأسعار المرتبطة بالعميل في حال تم عمل Eager Loading لها
             'price_list' => $this->whenLoaded('priceList', function () {
                 return [
                     'id'         => $this->priceList->id,

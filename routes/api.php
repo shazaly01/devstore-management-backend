@@ -84,7 +84,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // 6. إدارة الحسابات البنكية للمنشأة
     Route::apiResource('banks', BankController::class);
 
-    // 7. إدارة بنود وأنواع المصروفات
+    // 7. إدارة بنودس وأنواع المصروفات
     Route::apiResource('expenses', ExpenseController::class);
 
     // [تعديل التوافق]: إضافة مسارات موديول العملاء والموردين لربطها بالواجهات الأمامية والحساب المجمع

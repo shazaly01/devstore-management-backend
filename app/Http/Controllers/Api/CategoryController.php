@@ -21,12 +21,12 @@ class CategoryController extends Controller
     }
 
     /**
-     * استعراض قائمة التصنيفات (يدعم جلب الأبناء والأباء لتسهيل بناء الشجرة في Vue)
+     * استعراض قائمة التصنيفات مرتبة شجرياً مع تحميل الآباء لبناء المسار النصي
      */
     public function index(): AnonymousResourceCollection
     {
-        // جلب التصنيفات مع علاقة الأب لتجنب مشكلة الاستعلامات المتكررة N+1
-        $categories = Category::with('parent')->latest()->get();
+        // جلب التصنيفات مرتبة حسب المسار الشجري لتظهر الأبناء تحت الآباء مباشرة
+        $categories = Category::with('parent.parent.parent')->orderBy('path', 'asc')->get();
 
         return CategoryResource::collection($categories);
     }
@@ -53,7 +53,7 @@ class CategoryController extends Controller
     {
         return response()->json([
             'success' => true,
-            'data'    => new CategoryResource($category->load('parent'))
+            'data'    => new CategoryResource($category->load('parent.parent.parent'))
         ]);
     }
 
