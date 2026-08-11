@@ -30,6 +30,7 @@ class ItemResource extends JsonResource
             'base_unit_name' => $this->baseUnit?->name,
             'is_active'      => (bool) $this->is_active,
             'is_composite'   => (bool) $this->is_composite,
+            'expiry_date'    => $this->expiry_date?->format('Y-m-d'),
             'created_at'     => $this->created_at?->format('Y-m-d H:i:s'),
 
             // حقن المخزون اللحظي الفعلي بناءً على المخزن المحدد في طلب الفلترة الحالي

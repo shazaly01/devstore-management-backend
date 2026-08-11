@@ -17,7 +17,7 @@ class ItemService
     public function create(array $data): Item
     {
         return DB::transaction(function () use ($data) {
-            // 1. تسجيل البيانات الأساسية الثابتة للصنف بما فيها علم التجميع
+            // 1. تسجيل البيانات الأساسية الثابتة للصنف بما فيها علم التجميع وتاريخ الصلاحية
             $item = Item::create([
                 'name'          => $data['name'],
                 'item_type'     => $data['item_type'],
@@ -27,6 +27,7 @@ class ItemService
                 'base_unit_id'  => $data['base_unit_id'],
                 'is_active'     => $data['is_active'] ?? true,
                 'is_composite'  => $data['is_composite'] ?? false,
+                'expiry_date'   => $data['expiry_date'] ?? null,
             ]);
 
             // 2. تدوين مصفوفة المكونات والمواد الخام إذا كان الصنف تجميعياً
@@ -97,6 +98,7 @@ class ItemService
                 'base_unit_id'  => $data['base_unit_id'],
                 'is_active'     => $data['is_active'] ?? true,
                 'is_composite'  => $data['is_composite'],
+                'expiry_date'   => $data['expiry_date'] ?? null,
             ]);
 
             // 2. المزامنة الذكية للمكونات التجميعية: مسح القديم وإعادة البناء

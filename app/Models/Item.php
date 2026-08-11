@@ -27,7 +27,8 @@ class Item extends Model
         'base_unit_id',
         'is_active',
         'is_dimensional',
-        'is_composite', // [إضافة]: لتحديد ما إذا كان الصنف تجميعياً (يتكون من مواد أخرى)
+        'is_composite',
+        'expiry_date',
     ];
 
     /**
@@ -41,7 +42,8 @@ class Item extends Model
         'profit_margin'  => 'float',
         'is_active'      => 'boolean',
         'is_dimensional' => 'boolean',
-        'is_composite'   => 'boolean', // [إضافة]: لضمان عودة القيمة كـ true/false تلقائياً
+        'is_composite'   => 'boolean',
+        'expiry_date'    => 'date',
     ];
 
     // =========================================================================

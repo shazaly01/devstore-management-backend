@@ -29,6 +29,7 @@ class StoreItemRequest extends FormRequest
             'base_unit_id'                         => ['required', 'exists:units,id'],
             'is_active'                            => ['required', 'boolean'],
             'is_composite'                         => ['required', 'boolean'],
+            'expiry_date'                          => ['nullable', 'date'],
 
             // مصفوفة المكونات التجميعية (مطلوبة فقط في حال كان الصنف تجميعياً)
             'components'                           => ['required_if:is_composite,true', 'nullable', 'array'],
@@ -71,6 +72,7 @@ class StoreItemRequest extends FormRequest
             'base_unit_id.exists'                      => 'الوحدة الأساسية المختارة غير موجودة بدليل الوحدات.',
             'is_active.required'                       => 'حالة تفعيل أو إيقاف الصنف مطلوبة وبنية ممررة.',
             'is_composite.required'                    => 'يجب تحديد ما إذا كان الصنف تجميعياً أم لا.',
+            'expiry_date.date'                         => 'تاريخ الصلاحية يجب أن يكون تاريخاً صحيحاً.',
 
             // المكونات التجميعية
             'components.required_if'                   => 'يجب إدراج مكون واحد على الأقل للصنف التجميعي.',
