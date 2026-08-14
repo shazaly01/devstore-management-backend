@@ -55,6 +55,8 @@ class PurchaseService
                     'item_unit_id'    => $itemUnit->id, // ربط السطر بمعرف مصفوفة الوحدات المحدثة
                     'quantity'        => $item['quantity'],
                     'unit_cost'       => $item['unit_cost'],
+                    'profit_margin'   => $item['profit_margin'] ?? 0.00,
+                    'selling_price'   => $item['selling_price'] ?? null,
                     'subtotal'        => $item['subtotal'],
                     'discount_amount' => $item['discount_amount'] ?? 0.00,
                     'grand_total'     => $item['grand_total'],
@@ -64,10 +66,17 @@ class PurchaseService
                 $unitName = $itemUnit->unit->name ?? 'حبة';
                 $unitFactor = (float) $itemUnit->conversion_factor;
 
-                // 1. محرك احتساب المتوسط المرجح للتكلفة على مستوى الوحدة القياسية الصغرى (Base Unit)
+                // 1. محرك احتساب المتوسط المرجح للتكلفة وتحديث كرت الصنف ومصفوفة الوحدات
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
+                        // تحديث نسبة الربح في كرت الصنف الأساسي إن وجدت
+                        if (isset($item['profit_margin']) && !is_null($item['profit_margin'])) {
+                            $itemModel->update([
+                                'profit_margin' => (float) $item['profit_margin']
+                            ]);
+                        }
+
                         // استدعاء سطر الوحدة الصغرى الافتراضية للصنف من جدول مصفوفة الوحدات
                         $baseUnitRow = ItemUnit::where('item_id', $itemModel->id)
                             ->where('unit_id', $itemModel->base_unit_id)
@@ -91,8 +100,16 @@ class PurchaseService
                             }
                         }
 
-                        // تحديث تكلفة شراء هذه الوحدة بالتحديد داخل مصفوفة الوحدات
-                        $itemUnit->update(['cost' => (float) $item['unit_cost']]);
+                        // تجهيز بيانات التحديث المباشر للوحدة (التكلفة وسعر البيع الجديد إن وجد)
+                        $unitUpdateData = [
+                            'cost' => (float) $item['unit_cost'],
+                        ];
+
+                        if (isset($item['selling_price']) && !is_null($item['selling_price'])) {
+                            $unitUpdateData['price'] = (float) $item['selling_price'];
+                        }
+
+                        $itemUnit->update($unitUpdateData);
                     }
                 }
 
@@ -100,7 +117,7 @@ class PurchaseService
                 $this->stockService->recordMovement(
                     $item['item_id'],
                     $purchase->store_id,
-                    $itemUnit->id, // تمرير item_unit_id للتوافق الكامل
+                    $itemUnit->id,
                     $purchase->invoice_type === 'purchase' ? 'purchase' : 'adjustment',
                     $purchase->invoice_number,
                     $unitName,
@@ -162,6 +179,8 @@ class PurchaseService
                     'item_unit_id'    => $itemUnit->id,
                     'quantity'        => $item['quantity'],
                     'unit_cost'       => $item['unit_cost'],
+                    'profit_margin'   => $item['profit_margin'] ?? 0.00,
+                    'selling_price'   => $item['selling_price'] ?? null,
                     'subtotal'        => $item['subtotal'],
                     'discount_amount' => $item['discount_amount'] ?? 0.00,
                     'grand_total'     => $item['grand_total'],
@@ -171,10 +190,17 @@ class PurchaseService
                 $unitName = $itemUnit->unit->name ?? 'حبة';
                 $unitFactor = (float) $itemUnit->conversion_factor;
 
-                // 1. الحسبة المالية للمتوسط المرجح بعد تصفية الحركات القديمة وقبل ضخ الجديدة
+                // 1. الحسبة المالية للمتوسط المرجح وتحديث كرت الصنف ومصفوفة الوحدات
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
+                        // تحديث نسبة الربح في كرت الصنف الأساسي إن وجدت
+                        if (isset($item['profit_margin']) && !is_null($item['profit_margin'])) {
+                            $itemModel->update([
+                                'profit_margin' => (float) $item['profit_margin']
+                            ]);
+                        }
+
                         $baseUnitRow = ItemUnit::where('item_id', $itemModel->id)
                             ->where('unit_id', $itemModel->base_unit_id)
                             ->first();
@@ -197,8 +223,16 @@ class PurchaseService
                             }
                         }
 
-                        // مزامنة تكلفة الشراء الحالية داخل مصفوفة الوحدات
-                        $itemUnit->update(['cost' => (float) $item['unit_cost']]);
+                        // مزامنة تكلفة الشراء وسعر البيع الجديد داخل مصفوفة الوحدات
+                        $unitUpdateData = [
+                            'cost' => (float) $item['unit_cost'],
+                        ];
+
+                        if (isset($item['selling_price']) && !is_null($item['selling_price'])) {
+                            $unitUpdateData['price'] = (float) $item['selling_price'];
+                        }
+
+                        $itemUnit->update($unitUpdateData);
                     }
                 }
 

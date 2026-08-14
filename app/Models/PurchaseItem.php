@@ -13,23 +13,27 @@ class PurchaseItem extends Model
     protected $fillable = [
         'purchase_id',
         'item_id',
-        'item_unit_id', // تعديل معماري: الارتباط بمصفوفة وحدات الصنف بدلاً من الوحدة المجردة
+        'item_unit_id',
         'quantity',
         'unit_cost',
+        'selling_price',
+        'profit_margin',
         'subtotal',
         'discount_amount',
         'grand_total',
     ];
 
     protected $casts = [
-        'purchase_id'  => 'integer',
-        'item_id'      => 'integer',
-        'item_unit_id' => 'integer',
-        'quantity'     => 'float',
-        'unit_cost'    => 'float',
-        'subtotal'     => 'float',
+        'purchase_id'     => 'integer',
+        'item_id'         => 'integer',
+        'item_unit_id'    => 'integer',
+        'quantity'        => 'float',
+        'unit_cost'       => 'float',
+        'selling_price'   => 'float',
+        'profit_margin'   => 'float',
+        'subtotal'        => 'float',
         'discount_amount' => 'float',
-        'grand_total'  => 'float',
+        'grand_total'     => 'float',
     ];
 
     /**

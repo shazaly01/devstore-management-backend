@@ -49,10 +49,10 @@ class UpdatePurchaseRequest extends FormRequest
             'supplier_id'     => ['required', 'exists:suppliers,id'],
             'invoice_date'    => ['required', 'date'],
 
-            // [تحديث]: السماح بـ card ضمن الخيارات المعتمدة لطريقة السداد
+            // السماح بـ card ضمن الخيارات المعتمدة لطريقة السداد
             'payment_type'    => ['required', Rule::in(['cash', 'card', 'credit'])],
 
-            'subtotal'         => ['required', 'numeric', 'min:0'],
+            'subtotal'        => ['required', 'numeric', 'min:0'],
             'discount_amount' => ['nullable', 'numeric', 'min:0'],
             'tax_amount'      => ['nullable', 'numeric', 'min:0'],
             'grand_total'     => ['required', 'numeric', 'min:0'],
@@ -67,6 +67,8 @@ class UpdatePurchaseRequest extends FormRequest
 
             'items.*.quantity'       => ['required', 'numeric', 'gt:0'],
             'items.*.unit_cost'      => ['required', 'numeric', 'min:0'],
+            'items.*.profit_margin'  => ['nullable', 'numeric', 'min:0'],
+            'items.*.selling_price'  => ['nullable', 'numeric', 'min:0'],
             'items.*.subtotal'       => ['required', 'numeric', 'min:0'],
             'items.*.discount_amount'=> ['nullable', 'numeric', 'min:0'],
             'items.*.grand_total'    => ['required', 'numeric', 'min:0'],
@@ -93,6 +95,8 @@ class UpdatePurchaseRequest extends FormRequest
             'items.*.item_unit_id'     => 'وحدة الصنف',
             'items.*.quantity'         => 'الكمية',
             'items.*.unit_cost'        => 'سعر تكلفة الوحدة',
+            'items.*.profit_margin'    => 'نسبة الربح %',
+            'items.*.selling_price'    => 'سعر بيع الوحدة',
             'items.*.grand_total'      => 'إجمالي السطر',
         ];
     }
