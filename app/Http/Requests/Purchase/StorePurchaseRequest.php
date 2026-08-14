@@ -30,14 +30,14 @@ class StorePurchaseRequest extends FormRequest
             ],
             'store_id'        => ['required', 'exists:stores,id'],
 
-            // [تحديث مالي معماري]: التحقق المشروط من الخزنة في حالة الدفع النقدي
+            // التحقق المشروط من الخزنة في حالة الدفع النقدي
             'treasury_id'     => [
                 'nullable',
                 Rule::requiredIf($this->payment_type === 'cash'),
                 'exists:treasuries,id'
             ],
 
-            // [تحديث مالي معماري]: التحقق المشروط من البنك في حالة دفع الشبكة
+            // التحقق المشروط من البنك في حالة دفع الشبكة
             'bank_id'         => [
                 'nullable',
                 Rule::requiredIf($this->payment_type === 'card'),
@@ -56,17 +56,15 @@ class StorePurchaseRequest extends FormRequest
             'grand_total'     => ['required', 'numeric', 'min:0'],
             'notes'           => ['nullable', 'string', 'max:1000'],
 
-            // --- قواعد مصفوفة السطور (Items) بناءً على معمارية المصفوفة السعرية ---
+            // --- قواعد مصفوفة السطور (Items) ---
             'items'                  => ['required', 'array', 'min:1'],
             'items.*.item_id'        => ['required', 'exists:items,id'],
-
-            // التعديل المعماري: فحص معرف سطر الوحدة من مصفوفة الصنف مباشرة ومنع تكرار نفس الوحدة
             'items.*.item_unit_id'   => ['required', 'exists:item_units,id', 'distinct'],
-
             'items.*.quantity'       => ['required', 'numeric', 'gt:0'],
             'items.*.unit_cost'      => ['required', 'numeric', 'min:0'],
             'items.*.profit_margin'  => ['nullable', 'numeric', 'min:0'],
             'items.*.selling_price'  => ['nullable', 'numeric', 'min:0'],
+            'items.*.expiry_date'    => ['nullable', 'date'],
             'items.*.subtotal'       => ['required', 'numeric', 'min:0'],
             'items.*.discount_amount'=> ['nullable', 'numeric', 'min:0'],
             'items.*.grand_total'    => ['required', 'numeric', 'min:0'],
@@ -95,6 +93,7 @@ class StorePurchaseRequest extends FormRequest
             'items.*.unit_cost'        => 'سعر تكلفة الوحدة',
             'items.*.profit_margin'    => 'نسبة الربح %',
             'items.*.selling_price'    => 'سعر بيع الوحدة',
+            'items.*.expiry_date'      => 'تاريخ الصلاحية',
             'items.*.grand_total'      => 'إجمالي السطر',
         ];
     }

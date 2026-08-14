@@ -18,6 +18,7 @@ class PurchaseItem extends Model
         'unit_cost',
         'selling_price',
         'profit_margin',
+        'expiry_date',
         'subtotal',
         'discount_amount',
         'grand_total',
@@ -31,6 +32,7 @@ class PurchaseItem extends Model
         'unit_cost'       => 'float',
         'selling_price'   => 'float',
         'profit_margin'   => 'float',
+        'expiry_date'     => 'date',
         'subtotal'        => 'float',
         'discount_amount' => 'float',
         'grand_total'     => 'float',
@@ -53,8 +55,7 @@ class PurchaseItem extends Model
     }
 
     /**
-     * التعديل المعماري: ارتباط السطر بالوحدة المحددة للصنف (حبة، كرتون...)
-     * والتي تحمل معامل التحويل والتكلفة الخاصة بها
+     * ارتباط السطر بوحدة الصنف المحددة من مصفوفة الوحدات
      */
     public function itemUnit(): BelongsTo
     {

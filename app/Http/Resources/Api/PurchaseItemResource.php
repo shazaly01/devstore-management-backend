@@ -4,11 +4,12 @@ namespace App\Http\Resources\Api;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
+use Carbon\Carbon;
 
 class PurchaseItemResource extends JsonResource
 {
     /**
-     * تحويل مصفوفة السطور إلى تنسيق JSON متناسق للواجهة الأمامية مع حقن الوحدات والمخزون اللحظي الفعلي ونسبة الربح
+     * تحويل مصفوفة السطور إلى تنسيق JSON متناسق للواجهة الأمامية مع حقن الوحدات والمخزون وتاريخ الصلاحية
      */
     public function toArray(Request $request): array
     {
@@ -16,26 +17,27 @@ class PurchaseItemResource extends JsonResource
             'id'              => $this->id,
             'purchase_id'     => $this->purchase_id,
             'item_id'         => $this->item_id,
-            'item_name'       => $this->item->name ?? null, // جلب اسم الصنف مباشرة لتسهيل العرض في الجداول
+            'item_name'       => $this->item->name ?? null,
             'item_code'       => $this->item->code ?? null,
             'item_type'       => $this->item->item_type ?? null,
 
-            // التعديل المعماري: تعويض معرف الوحدة العام بمعرف سطر مصفوفة الوحدات المطور
+            // المعرف الخاص بمصفوفة وحدات الصنف
             'item_unit_id'    => $this->item_unit_id,
-            'unit_name'       => $this->itemUnit?->unit?->name ?? null, // جلب اسم الوحدة بالعبور الآمن (كرتون، حبة...)
+            'unit_name'       => $this->itemUnit?->unit?->name ?? null,
 
             'quantity'        => (float) $this->quantity,
             'unit_cost'       => (float) $this->unit_cost,
             'profit_margin'   => (float) ($this->profit_margin ?? 0),
             'selling_price'   => $this->selling_price !== null ? (float) $this->selling_price : null,
+            'expiry_date'     => $this->expiry_date ? Carbon::parse($this->expiry_date)->format('Y-m-d') : null,
             'subtotal'        => (float) $this->subtotal,
             'discount_amount' => (float) $this->discount_amount,
             'grand_total'     => (float) $this->grand_total,
 
-            // حقن المخزون اللحظي الفعلي للصنف الآن بناءً على مستودع حركية المشتريات الحالية
+            // الرصيد المخزني الفعلي للصنف في مستودع الفاتورة
             'current_stock'   => (float) ($this->item->stocks->where('store_id', $this->purchase->store_id)->first()?->current_quantity ?? 0),
 
-            // التعديل المعماري الجذري: حقن الوحدات البديلة الكاملة مضافاً إليها معاملات التحويل والتكلفة والأسعار
+            // مصفوفة الوحدات البديلة المتاحة للصنف مع معاملات التحويل والتسعير
             'available_units' => $this->item->units->map(function ($itemUnit) {
                 return [
                     'id'                => $itemUnit->id,

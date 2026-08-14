@@ -32,14 +32,14 @@ class UpdatePurchaseRequest extends FormRequest
             ],
             'store_id'        => ['required', 'exists:stores,id'],
 
-            // [تحديث مالي معماري]: التحقق المشروط من الخزنة في حالة الدفع النقدي والتعديل الجاري
+            // التحقق المشروط من الخزنة في حالة الدفع النقدي والتعديل الجاري
             'treasury_id'     => [
                 'nullable',
                 Rule::requiredIf($this->payment_type === 'cash'),
                 'exists:treasuries,id'
             ],
 
-            // [تحديث مالي معماري]: التحقق المشروط من البنك في حالة دفع الشبكة والتعديل الجاري
+            // التحقق المشروط من البنك في حالة دفع الشبكة والتعديل الجاري
             'bank_id'         => [
                 'nullable',
                 Rule::requiredIf($this->payment_type === 'card'),
@@ -61,14 +61,12 @@ class UpdatePurchaseRequest extends FormRequest
             // --- قواعد مصفوفة السطور المحدثة (Items) ---
             'items'                  => ['required', 'array', 'min:1'],
             'items.*.item_id'        => ['required', 'exists:items,id'],
-
-            // التعديل المعماري: التحقق من معرف سطر الوحدة من مصفوفة الصنف المستهدفة لمنع الاختلال
             'items.*.item_unit_id'   => ['required', 'exists:item_units,id', 'distinct'],
-
             'items.*.quantity'       => ['required', 'numeric', 'gt:0'],
             'items.*.unit_cost'      => ['required', 'numeric', 'min:0'],
             'items.*.profit_margin'  => ['nullable', 'numeric', 'min:0'],
             'items.*.selling_price'  => ['nullable', 'numeric', 'min:0'],
+            'items.*.expiry_date'    => ['nullable', 'date'],
             'items.*.subtotal'       => ['required', 'numeric', 'min:0'],
             'items.*.discount_amount'=> ['nullable', 'numeric', 'min:0'],
             'items.*.grand_total'    => ['required', 'numeric', 'min:0'],
@@ -97,6 +95,7 @@ class UpdatePurchaseRequest extends FormRequest
             'items.*.unit_cost'        => 'سعر تكلفة الوحدة',
             'items.*.profit_margin'    => 'نسبة الربح %',
             'items.*.selling_price'    => 'سعر بيع الوحدة',
+            'items.*.expiry_date'      => 'تاريخ الصلاحية',
             'items.*.grand_total'      => 'إجمالي السطر',
         ];
     }

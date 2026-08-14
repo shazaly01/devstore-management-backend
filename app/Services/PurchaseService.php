@@ -57,6 +57,7 @@ class PurchaseService
                     'unit_cost'       => $item['unit_cost'],
                     'profit_margin'   => $item['profit_margin'] ?? 0.00,
                     'selling_price'   => $item['selling_price'] ?? null,
+                    'expiry_date'     => $item['expiry_date'] ?? null,
                     'subtotal'        => $item['subtotal'],
                     'discount_amount' => $item['discount_amount'] ?? 0.00,
                     'grand_total'     => $item['grand_total'],
@@ -70,11 +71,19 @@ class PurchaseService
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
-                        // تحديث نسبة الربح في كرت الصنف الأساسي إن وجدت
+                        // تحديث نسبة الربح وتاريخ الصلاحية في كرت الصنف الأساسي إن وجدا
+                        $itemUpdateData = [];
+
                         if (isset($item['profit_margin']) && !is_null($item['profit_margin'])) {
-                            $itemModel->update([
-                                'profit_margin' => (float) $item['profit_margin']
-                            ]);
+                            $itemUpdateData['profit_margin'] = (float) $item['profit_margin'];
+                        }
+
+                        if (isset($item['expiry_date']) && !empty($item['expiry_date'])) {
+                            $itemUpdateData['expiry_date'] = $item['expiry_date'];
+                        }
+
+                        if (!empty($itemUpdateData)) {
+                            $itemModel->update($itemUpdateData);
                         }
 
                         // استدعاء سطر الوحدة الصغرى الافتراضية للصنف من جدول مصفوفة الوحدات
@@ -181,6 +190,7 @@ class PurchaseService
                     'unit_cost'       => $item['unit_cost'],
                     'profit_margin'   => $item['profit_margin'] ?? 0.00,
                     'selling_price'   => $item['selling_price'] ?? null,
+                    'expiry_date'     => $item['expiry_date'] ?? null,
                     'subtotal'        => $item['subtotal'],
                     'discount_amount' => $item['discount_amount'] ?? 0.00,
                     'grand_total'     => $item['grand_total'],
@@ -194,11 +204,19 @@ class PurchaseService
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
-                        // تحديث نسبة الربح في كرت الصنف الأساسي إن وجدت
+                        // تحديث نسبة الربح وتاريخ الصلاحية في كرت الصنف الأساسي إن وجدا
+                        $itemUpdateData = [];
+
                         if (isset($item['profit_margin']) && !is_null($item['profit_margin'])) {
-                            $itemModel->update([
-                                'profit_margin' => (float) $item['profit_margin']
-                            ]);
+                            $itemUpdateData['profit_margin'] = (float) $item['profit_margin'];
+                        }
+
+                        if (isset($item['expiry_date']) && !empty($item['expiry_date'])) {
+                            $itemUpdateData['expiry_date'] = $item['expiry_date'];
+                        }
+
+                        if (!empty($itemUpdateData)) {
+                            $itemModel->update($itemUpdateData);
                         }
 
                         $baseUnitRow = ItemUnit::where('item_id', $itemModel->id)
