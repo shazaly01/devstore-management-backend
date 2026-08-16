@@ -40,14 +40,15 @@ class UserController extends Controller
         DB::beginTransaction();
         try {
             $userData = [
-                'full_name'   => $validated['full_name'],
-                'username'    => $validated['username'],
-                'email'       => $validated['email'] ?? null,
-                'password'    => Hash::make($validated['password']),
-                'type'        => $validated['type'],
-                'store_id'    => $validated['store_id'] ?? null,
-                'treasury_id' => $validated['treasury_id'] ?? null,
-                'bank_id'     => $validated['bank_id'] ?? null,
+                'full_name'     => $validated['full_name'],
+                'username'      => $validated['username'],
+                'email'         => $validated['email'] ?? null,
+                'password'      => Hash::make($validated['password']),
+                'type'          => $validated['type'],
+                'store_id'      => $validated['store_id'] ?? null,
+                'treasury_id'   => $validated['treasury_id'] ?? null,
+                'bank_id'       => $validated['bank_id'] ?? null,
+                'stock_control' => (bool) ($validated['stock_control'] ?? false),
             ];
 
             $user = User::create($userData);
@@ -74,13 +75,16 @@ class UserController extends Controller
         DB::beginTransaction();
         try {
             $userData = [
-                'full_name'   => $validated['full_name'],
-                'username'    => $validated['username'],
-                'email'       => $validated['email'] ?? $user->email,
-                'type'        => $validated['type'],
-                'store_id'    => $validated['store_id'] ?? $user->store_id,
-                'treasury_id' => $validated['treasury_id'] ?? $user->treasury_id,
-                'bank_id'     => $validated['bank_id'] ?? $user->bank_id,
+                'full_name'     => $validated['full_name'],
+                'username'      => $validated['username'],
+                'email'         => $validated['email'] ?? $user->email,
+                'type'          => $validated['type'],
+                'store_id'      => $validated['store_id'] ?? $user->store_id,
+                'treasury_id'   => $validated['treasury_id'] ?? $user->treasury_id,
+                'bank_id'       => $validated['bank_id'] ?? $user->bank_id,
+                'stock_control' => isset($validated['stock_control']) 
+                    ? (bool) $validated['stock_control'] 
+                    : (bool) $user->stock_control,
             ];
 
             if (!empty($validated['password'])) {

@@ -15,21 +15,22 @@ class UserResource extends JsonResource
     public function toArray(Request $request): array
     {
         return [
-            'id'          => $this->id,
-            'full_name'   => $this->full_name,
-            'username'    => $this->username,
-            'email'       => $this->email,
-            'type'        => $this->type,
-            'store_id'    => $this->store_id,
-            'treasury_id' => $this->treasury_id,
-            'bank_id'     => $this->bank_id,
-            'created_at'  => $this->created_at->toDateTimeString(),
+            'id'            => $this->id,
+            'full_name'     => $this->full_name,
+            'username'      => $this->username,
+            'email'         => $this->email,
+            'type'          => $this->type,
+            'store_id'      => $this->store_id,
+            'treasury_id'   => $this->treasury_id,
+            'bank_id'       => $this->bank_id,
+            'stock_control' => (bool) $this->stock_control,
+            'created_at'    => $this->created_at?->toDateTimeString(),
 
             // تحميل بيانات العلاقات كـ Objects عند طلبها لتفادي استعلامات N+1
-            'store'       => $this->whenLoaded('store'),
-            'treasury'    => $this->whenLoaded('treasury'),
-            'bank'        => $this->whenLoaded('bank'),
-            'roles'       => RoleResource::collection($this->whenLoaded('roles')),
+            'store'         => $this->whenLoaded('store'),
+            'treasury'      => $this->whenLoaded('treasury'),
+            'bank'          => $this->whenLoaded('bank'),
+            'roles'         => RoleResource::collection($this->whenLoaded('roles')),
         ];
     }
 }
