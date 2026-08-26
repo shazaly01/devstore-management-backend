@@ -8,7 +8,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 class PurchaseResource extends JsonResource
 {
     /**
-     * تحويل بيانات رأس فاتورة المشتريات مع تضمين السطور التابعة لها إلى JSON
+     * تحويل بيانات رأس فاتورة المشتريات مع تضمين العملة وسعر الصرف والسطور التابعة لها إلى JSON
      */
     public function toArray(Request $request): array
     {
@@ -40,6 +40,11 @@ class PurchaseResource extends JsonResource
 
             'supplier_id'      => $this->supplier_id,
             'supplier_name'    => $this->supplier->name ?? null, // اسم المورد المستخرج من شجرة الحسابات (الذمم الدائنة)
+
+            'currency_id'      => $this->currency_id,
+            'currency_name'    => $this->currency?->name,
+            'currency_code'    => $this->currency?->code,
+            'exchange_rate'    => $this->exchange_rate !== null ? (float) $this->exchange_rate : null,
 
             'user_id'          => $this->user_id,
             'user_name'        => $this->user->name ?? null,

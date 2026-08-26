@@ -16,6 +16,7 @@ class PurchaseItem extends Model
         'item_unit_id',
         'quantity',
         'unit_cost',
+        'foreign_unit_cost',
         'selling_price',
         'profit_margin',
         'expiry_date',
@@ -25,17 +26,18 @@ class PurchaseItem extends Model
     ];
 
     protected $casts = [
-        'purchase_id'     => 'integer',
-        'item_id'         => 'integer',
-        'item_unit_id'    => 'integer',
-        'quantity'        => 'float',
-        'unit_cost'       => 'float',
-        'selling_price'   => 'float',
-        'profit_margin'   => 'float',
-        'expiry_date'     => 'date',
-        'subtotal'        => 'float',
-        'discount_amount' => 'float',
-        'grand_total'     => 'float',
+        'purchase_id'       => 'integer',
+        'item_id'           => 'integer',
+        'item_unit_id'      => 'integer',
+        'quantity'          => 'float',
+        'unit_cost'         => 'float',
+        'foreign_unit_cost' => 'float',
+        'selling_price'     => 'float',
+        'profit_margin'     => 'float',
+        'expiry_date'       => 'date',
+        'subtotal'          => 'float',
+        'discount_amount'   => 'float',
+        'grand_total'       => 'float',
     ];
 
     /**

@@ -22,6 +22,7 @@ class ItemUnit extends Model
         'unit_id',
         'conversion_factor',
         'cost',
+        'foreign_cost',
         'price',
     ];
 
@@ -31,11 +32,12 @@ class ItemUnit extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'item_id' => 'integer',
-        'unit_id' => 'integer',
+        'item_id'           => 'integer',
+        'unit_id'           => 'integer',
         'conversion_factor' => 'float',
-        'cost' => 'float',
-        'price' => 'float',
+        'cost'              => 'float',
+        'foreign_cost'      => 'float',
+        'price'             => 'float',
     ];
 
     /**
@@ -68,5 +70,13 @@ class ItemUnit extends Model
     public function prices(): HasMany
     {
         return $this->hasMany(ItemUnitPrice::class, 'item_unit_id');
+    }
+
+    /**
+     * جلب سجلات تاريخ الأسعار والتراجعات الخاصة بهذه الوحدة
+     */
+    public function priceHistories(): HasMany
+    {
+        return $this->hasMany(ItemPriceHistory::class, 'item_unit_id');
     }
 }

@@ -44,7 +44,7 @@ class PermissionSeeder extends Seeder
             // إدارة حسابات الموردين
             'supplier.view', 'supplier.create', 'supplier.update', 'supplier.delete',
 
-
+            // إدارة حسابات الموظفين
             'employee.view', 'employee.create', 'employee.update', 'employee.delete',
 
             // إدارة بنود المصروفات التشغيلية
@@ -68,6 +68,12 @@ class PermissionSeeder extends Seeder
             // موديول فواتير المبيعات ومردوداتها ملاءمة خامات الورشة
             'sale.view', 'sale.create', 'sale.update', 'sale.delete', 'sale.swap_raw_materials',
 
+            // إدارة موديول وسياسات التسعير والعملات
+            'pricing.bulk-reprice',          // صلاحية معاينة وتطبيق إعادة التسعير الجماعي
+            'pricing.view-radar',            // صلاحية استعراض رادار تآكل الهوامش
+            'pricing.rollback',              // صلاحية التراجع عن دفعات الأسعار
+            'pricing.manage-exchange-rates', // صلاحية تسجيل أسعار الصرف اليومية
+
             // إدارة سندات القبض والصرف
             'voucher.view', 'voucher.create', 'voucher.update', 'voucher.delete',
 
@@ -85,7 +91,7 @@ class PermissionSeeder extends Seeder
             'report.inventory',         // التقارير المخزنية الإدارية (تقييم المخزون)
             'report.account_statement', // تقرير كشف الحساب الرئيسي للشجرة
             'report.trial_balance',     // تقرير ميزان المراجعة
-            'report.sub_ledger',        // [مستقلة وتفضيلية]: صلاحية كشف الحساب المساعد المفتوح للجميع
+            'report.sub_ledger',        // صلاحية كشف الحساب المساعد المفتوح للجميع
 
             // النسخ الاحتياطي والإعدادات العامة
             'backup.view', 'backup.create', 'backup.delete', 'backup.download', 'backup.restore',
@@ -104,37 +110,36 @@ class PermissionSeeder extends Seeder
 
         // ب. دور الـ Admin (يرث كافة الصلاحيات المنبتة تلقائياً)
         $adminRole = Role::firstOrCreate(['name' => 'Admin', 'guard_name' => $guardName]);
-        $adminRole->givePermissionTo(Permission::all());
+        $adminRole->syncPermissions(Permission::where('guard_name', $guardName)->get());
 
         // ج. دور مدخل البيانات (Data Entry)
-        // صلاحياته تشغيلية بحتة ومحجوب تماماً عن التقارير المالية الإدارية باستثناء الحساب المساعد
         $dataEntryRole = Role::firstOrCreate(['name' => 'Data Entry', 'guard_name' => $guardName]);
-        $dataEntryRole->givePermissionTo([
+        $dataEntryRole->syncPermissions([
             'dashboard.view',
             'treasury.view', 'treasury.create',
             'bank.view', 'bank.create',
             'customer.view', 'customer.create', 'customer.update',
             'supplier.view', 'supplier.create', 'supplier.update',
             'employee.view', 'employee.create', 'employee.update',
-            // إدارة حسابات الموظفين
-            'employee.view', 'employee.create', 'employee.update', 'employee.delete',
             'expense.view', 'expense.create',
             'store.view', 'store.create',
             'category.view',
             'unit.view',
             'item.view', 'item.create',
             'journal_entry.view', 'journal_entry.create',
-            'report.sub_ledger', // منحه صلاحية كشف الحساب المساعد بأمان تام دون كشف باقي الأسرار المالية
+            'report.sub_ledger',
         ]);
 
         // د. دور المراجع (Auditor)
-        // يملك كافة صلاحيات العرض العام ومخول لرؤية كافة تقارير النظام الإدارية والتشغيلية
         $auditorRole = Role::firstOrCreate(['name' => 'Auditor', 'guard_name' => $guardName]);
 
-        $viewPermissions = Permission::where('name', 'like', '%.view')
-            ->orWhere('name', 'like', 'report.%')
+        $viewPermissions = Permission::where('guard_name', $guardName)
+            ->where(function ($query) {
+                $query->where('name', 'like', '%.view')
+                    ->orWhere('name', 'like', 'report.%');
+            })
             ->pluck('name');
 
-        $auditorRole->givePermissionTo($viewPermissions);
+        $auditorRole->syncPermissions($viewPermissions);
     }
 }

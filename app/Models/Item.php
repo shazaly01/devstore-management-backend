@@ -24,6 +24,10 @@ class Item extends Model
         'name',
         'item_type',
         'profit_margin',
+        'purchase_currency_id',
+        'pricing_policy',
+        'min_margin_percentage',
+        'rounding_rule',
         'base_unit_id',
         'is_active',
         'is_dimensional',
@@ -37,13 +41,15 @@ class Item extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'category_id'    => 'integer',
-        'base_unit_id'   => 'integer',
-        'profit_margin'  => 'float',
-        'is_active'      => 'boolean',
-        'is_dimensional' => 'boolean',
-        'is_composite'   => 'boolean',
-        'expiry_date'    => 'date',
+        'category_id'           => 'integer',
+        'purchase_currency_id'  => 'integer',
+        'base_unit_id'          => 'integer',
+        'profit_margin'         => 'float',
+        'min_margin_percentage' => 'float',
+        'is_active'             => 'boolean',
+        'is_dimensional'        => 'boolean',
+        'is_composite'          => 'boolean',
+        'expiry_date'           => 'date',
     ];
 
     // =========================================================================
@@ -56,6 +62,14 @@ class Item extends Model
     public function category(): BelongsTo
     {
         return $this->belongsTo(Category::class, 'category_id');
+    }
+
+    /**
+     * الارتباط بالعملة المرجعية للشراء
+     */
+    public function purchaseCurrency(): BelongsTo
+    {
+        return $this->belongsTo(Currency::class, 'purchase_currency_id');
     }
 
     /**
@@ -88,6 +102,14 @@ class Item extends Model
     public function prices(): HasMany
     {
         return $this->hasMany(ItemUnitPrice::class, 'item_id');
+    }
+
+    /**
+     * جلب سجلات تاريخ الأسعار والتراجعات الخاصة بالصنف
+     */
+    public function priceHistories(): HasMany
+    {
+        return $this->hasMany(ItemPriceHistory::class, 'item_id');
     }
 
     /**

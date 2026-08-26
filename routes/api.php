@@ -36,6 +36,10 @@ use App\Http\Controllers\Api\OpeningStockController;
 use App\Http\Controllers\Api\TechnicianSaleController;
 use App\Http\Controllers\Api\MaterialConsumptionController;
 
+// --- استيراد متحكمات موديول التسعير والعملات الجديد ---
+use App\Http\Controllers\Api\PricingController;
+use App\Http\Controllers\Api\ExchangeRateController;
+
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -51,8 +55,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // 1. لوحة التحكم (الإحصائيات)
     Route::get('/manager/dashboard/stats', [DashboardController::class, 'getStats']);
 
-    // 2. إدارة النسخ الاحتياطي
- // 2. إدارة النسخ الاحتياطي (نسخ، استعادة، وسحب آمن)
+    // 2. إدارة النسخ الاحتياطي (نسخ، استعادة، وسحب آمن)
     Route::prefix('backups')->name('backups.')->group(function () {
         Route::get('/', [BackupController::class, 'index'])->middleware('can:backup.view');
         Route::post('/', [BackupController::class, 'store'])->middleware('can:backup.create');
@@ -107,12 +110,36 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('stores', StoreController::class);
 
     // جلب فئات الأسعار لتغذية مصفوفة الأصناف ديناميكياً
-Route::get('price-lists', [PriceListController::class, 'index']);
+    Route::get('price-lists', [PriceListController::class, 'index']);
 
-   // 10. إدارة دليل الأصناف والخدمات والمواد الخام
+    // 10. إدارة دليل الأصناف والخدمات والمواد الخام
     Route::post('items/refresh-stock', [ItemController::class, 'refreshStock'])->name('items.refresh_stock');
     Route::put('items/{id}/reorder-level', [ItemController::class, 'updateReorderLevel']);
     Route::apiResource('items', ItemController::class);
+
+    // -------------------------------------------------------------
+    // --- موديول التسعير المتقدم وأسعار الصرف (Pricing & Currencies) ---
+    // -------------------------------------------------------------
+    
+    // مسارات إدارة أسعار الصرف
+    Route::prefix('exchange-rates')->group(function () {
+        Route::get('/', [ExchangeRateController::class, 'index']);
+        Route::post('/', [ExchangeRateController::class, 'store']);
+        Route::get('/{currency}/history', [ExchangeRateController::class, 'history']);
+    });
+
+    // مسارات محرك التسعير والتراجع والرادار
+    Route::prefix('pricing')->group(function () {
+        Route::post('/bulk-reprice/preview', [PricingController::class, 'preview']);
+        Route::post('/bulk-reprice/apply', [PricingController::class, 'apply']);
+        Route::get('/radar', [PricingController::class, 'radar']);
+        Route::post('/rollback', [PricingController::class, 'rollback']);
+        Route::get('/history', [PricingController::class, 'history']);
+        Route::post('/foreign-cost/preview', [PricingController::class, 'previewForeignCost']);
+        Route::post('/foreign-cost/apply', [PricingController::class, 'applyForeignCost']);
+    });
+
+    // -------------------------------------------------------------
 
     // مسارات موديول المشتريات ومردوداتها المدمج (تغطي الإضافة، التعديل الفوري، الحذف، والاستعراض)
     Route::apiResource('purchases', PurchaseController::class);

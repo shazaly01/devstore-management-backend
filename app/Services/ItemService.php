@@ -12,22 +12,26 @@ use Illuminate\Support\Facades\DB;
 class ItemService
 {
     /**
-     * إنشاء صنف جديد مع كافة مصفوفات الوحدات والأسعار والباركودات والمكونات التجميعية
+     * إنشاء صنف جديد مع كافة مصفوفات الوحدات والأسعار وسياسات التسعير والباركودات والمكونات التجميعية
      */
     public function create(array $data): Item
     {
         return DB::transaction(function () use ($data) {
-            // 1. تسجيل البيانات الأساسية الثابتة للصنف بما فيها علم التجميع وتاريخ الصلاحية
+            // 1. تسجيل البيانات الأساسية الثابتة للصنف بما فيها سياسات التسعير وعلم التجميع وتاريخ الصلاحية
             $item = Item::create([
-                'name'          => $data['name'],
-                'item_type'     => $data['item_type'],
-                'profit_margin' => $data['profit_margin'] ?? 0,
-                'category_id'   => $data['category_id'] ?? null,
-                'category_path' => $data['category_path'] ?? null,
-                'base_unit_id'  => $data['base_unit_id'],
-                'is_active'     => $data['is_active'] ?? true,
-                'is_composite'  => $data['is_composite'] ?? false,
-                'expiry_date'   => $data['expiry_date'] ?? null,
+                'name'                  => $data['name'],
+                'item_type'             => $data['item_type'],
+                'profit_margin'         => $data['profit_margin'] ?? 0,
+                'purchase_currency_id'  => $data['purchase_currency_id'] ?? null,
+                'pricing_policy'        => $data['pricing_policy'] ?? 'manual',
+                'min_margin_percentage' => $data['min_margin_percentage'] ?? 0,
+                'rounding_rule'         => $data['rounding_rule'] ?? 'none',
+                'category_id'           => $data['category_id'] ?? null,
+                'category_path'         => $data['category_path'] ?? null,
+                'base_unit_id'          => $data['base_unit_id'],
+                'is_active'             => $data['is_active'] ?? true,
+                'is_composite'          => $data['is_composite'] ?? false,
+                'expiry_date'           => $data['expiry_date'] ?? null,
             ]);
 
             // 2. تدوين مصفوفة المكونات والمواد الخام إذا كان الصنف تجميعياً
@@ -48,6 +52,7 @@ class ItemService
                     'unit_id'           => $unitData['unit_id'],
                     'conversion_factor' => $unitData['conversion_factor'],
                     'cost'              => $unitData['cost'],
+                    'foreign_cost'      => $unitData['foreign_cost'] ?? null,
                     'price'             => $unitData['price'],
                 ]);
 
@@ -76,29 +81,33 @@ class ItemService
                 }
             }
 
-            return $item->load(['units.unit', 'units.barcodes', 'units.prices.priceList', 'baseUnit', 'category', 'components.childItem']);
+            return $item->load(['units.unit', 'units.barcodes', 'units.prices.priceList', 'baseUnit', 'category', 'components.childItem', 'purchaseCurrency']);
         });
     }
 
     /**
-     * تحديث بيانات الصنف ومزامنة مصفوفاته بأمان كامل ومعالجة المكونات التجميعية بدقة
+     * تحديث بيانات الصنف ومزامنة مصفوفاته وسياسات التسعير بأمان كامل ومعالجة المكونات التجميعية بدقة
      */
     public function update(int $id, array $data): Item
     {
         return DB::transaction(function () use ($id, $data) {
             $item = Item::findOrFail($id);
 
-            // 1. تحديث البيانات الإدارية الثابتة للصنف
+            // 1. تحديث البيانات الإدارية وسياسات التسعير الثابتة للصنف
             $item->update([
-                'name'          => $data['name'],
-                'item_type'     => $data['item_type'],
-                'profit_margin' => $data['profit_margin'] ?? 0,
-                'category_id'   => $data['category_id'] ?? null,
-                'category_path' => $data['category_path'] ?? null,
-                'base_unit_id'  => $data['base_unit_id'],
-                'is_active'     => $data['is_active'] ?? true,
-                'is_composite'  => $data['is_composite'],
-                'expiry_date'   => $data['expiry_date'] ?? null,
+                'name'                  => $data['name'],
+                'item_type'             => $data['item_type'],
+                'profit_margin'         => $data['profit_margin'] ?? 0,
+                'purchase_currency_id'  => $data['purchase_currency_id'] ?? null,
+                'pricing_policy'        => $data['pricing_policy'] ?? 'manual',
+                'min_margin_percentage' => $data['min_margin_percentage'] ?? 0,
+                'rounding_rule'         => $data['rounding_rule'] ?? 'none',
+                'category_id'           => $data['category_id'] ?? null,
+                'category_path'         => $data['category_path'] ?? null,
+                'base_unit_id'          => $data['base_unit_id'],
+                'is_active'             => $data['is_active'] ?? true,
+                'is_composite'          => $data['is_composite'],
+                'expiry_date'           => $data['expiry_date'] ?? null,
             ]);
 
             // 2. المزامنة الذكية للمكونات التجميعية: مسح القديم وإعادة البناء
@@ -137,6 +146,7 @@ class ItemService
                     [
                         'conversion_factor' => $unitData['conversion_factor'],
                         'cost'              => $unitData['cost'],
+                        'foreign_cost'      => $unitData['foreign_cost'] ?? null,
                         'price'             => $unitData['price'],
                         'deleted_at'        => null
                     ]
@@ -171,7 +181,7 @@ class ItemService
                 }
             }
 
-            return $item->load(['units.unit', 'units.barcodes', 'units.prices.priceList', 'baseUnit', 'category', 'components.childItem']);
+            return $item->load(['units.unit', 'units.barcodes', 'units.prices.priceList', 'baseUnit', 'category', 'components.childItem', 'purchaseCurrency']);
         });
     }
 
@@ -207,6 +217,7 @@ class ItemService
             'units.prices.priceList',
             'baseUnit',
             'category',
+            'purchaseCurrency',
             'components.childItem',
             'stocks' => function ($q) use ($storeId) {
                 if ($storeId) {
@@ -232,6 +243,12 @@ class ItemService
         })
         ->when(isset($filters['category_id']), function ($query) use ($filters) {
             $query->where('category_id', $filters['category_id']);
+        })
+        ->when(isset($filters['purchase_currency_id']), function ($query) use ($filters) {
+            $query->where('purchase_currency_id', $filters['purchase_currency_id']);
+        })
+        ->when(isset($filters['pricing_policy']), function ($query) use ($filters) {
+            $query->where('pricing_policy', $filters['pricing_policy']);
         })
         ->when(isset($filters['is_active']), function ($query) use ($filters) {
             $query->where('is_active', $filters['is_active']);

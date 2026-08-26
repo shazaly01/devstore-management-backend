@@ -9,6 +9,7 @@ use App\Models\Supplier;
 use App\Models\Store;
 use App\Models\Item;
 use App\Models\ItemUnit;
+use App\Models\ItemUnitPrice;
 use App\Models\ItemStock;
 use App\Models\Treasury;
 use App\Models\Bank;
@@ -31,7 +32,7 @@ class PurchaseService
     }
 
     /**
-     * معالجة وحفظ فاتورة مشتريات أو مرتجع جديدة بالكامل
+     * معالجة وحفظ فاتورة مشتريات أو مرتجع جديدة بالكامل مع دعم التكلفة بالعملة الأجنبية
      */
     public function createPurchase(array $data, int $userId): Purchase
     {
@@ -51,78 +52,32 @@ class PurchaseService
                     ->firstOrFail();
 
                 $purchaseItem = $purchase->items()->create([
-                    'item_id'         => $item['item_id'],
-                    'item_unit_id'    => $itemUnit->id, // ربط السطر بمعرف مصفوفة الوحدات المحدثة
-                    'quantity'        => $item['quantity'],
-                    'unit_cost'       => $item['unit_cost'],
-                    'profit_margin'   => $item['profit_margin'] ?? 0.00,
-                    'selling_price'   => $item['selling_price'] ?? null,
-                    'expiry_date'     => $item['expiry_date'] ?? null,
-                    'subtotal'        => $item['subtotal'],
-                    'discount_amount' => $item['discount_amount'] ?? 0.00,
-                    'grand_total'     => $item['grand_total'],
+                    'item_id'           => $item['item_id'],
+                    'item_unit_id'      => $itemUnit->id,
+                    'quantity'          => $item['quantity'],
+                    'unit_cost'         => $item['unit_cost'],
+                    'foreign_unit_cost' => $item['foreign_unit_cost'] ?? null,
+                    'profit_margin'     => $item['profit_margin'] ?? 0.00,
+                    'selling_price'     => $item['selling_price'] ?? null,
+                    'expiry_date'       => $item['expiry_date'] ?? null,
+                    'subtotal'          => $item['subtotal'],
+                    'discount_amount'   => $item['discount_amount'] ?? 0.00,
+                    'grand_total'       => $item['grand_total'],
                 ]);
 
                 $qty = $purchase->invoice_type === 'purchase' ? $item['quantity'] : -$item['quantity'];
                 $unitName = $itemUnit->unit->name ?? 'حبة';
                 $unitFactor = (float) $itemUnit->conversion_factor;
 
-                // 1. محرك احتساب المتوسط المرجح للتكلفة وتحديث كرت الصنف ومصفوفة الوحدات
+                // 1. محرك اعتماد سعر آخر شراء وتحديث كرت الصنف وكافة مصفوفة الوحدات والأسعار والتكلفة الأجنبية
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
-                        // تحديث نسبة الربح وتاريخ الصلاحية في كرت الصنف الأساسي إن وجدا
-                        $itemUpdateData = [];
-
-                        if (isset($item['profit_margin']) && !is_null($item['profit_margin'])) {
-                            $itemUpdateData['profit_margin'] = (float) $item['profit_margin'];
-                        }
-
-                        if (isset($item['expiry_date']) && !empty($item['expiry_date'])) {
-                            $itemUpdateData['expiry_date'] = $item['expiry_date'];
-                        }
-
-                        if (!empty($itemUpdateData)) {
-                            $itemModel->update($itemUpdateData);
-                        }
-
-                        // استدعاء سطر الوحدة الصغرى الافتراضية للصنف من جدول مصفوفة الوحدات
-                        $baseUnitRow = ItemUnit::where('item_id', $itemModel->id)
-                            ->where('unit_id', $itemModel->base_unit_id)
-                            ->first();
-
-                        $currentQty = (float) ItemStock::where('item_id', $item['item_id'])->sum('current_quantity');
-                        $oldCost = $baseUnitRow ? (float) $baseUnitRow->cost : 0.00;
-
-                        $unitFactor = (float) ($unitFactor > 0 ? $unitFactor : 1.00);
-                        $newQtyBase = (float) $item['quantity'] * $unitFactor;
-                        $newCostBase = (float) $item['unit_cost'] / $unitFactor;
-
-                        $totalQty = $currentQty + $newQtyBase;
-
-                        if ($baseUnitRow) {
-                            if ($totalQty > 0) {
-                                $newWeightedCost = (($currentQty * $oldCost) + ($newQtyBase * $newCostBase)) / $totalQty;
-                                $baseUnitRow->update(['cost' => round($newWeightedCost, 4)]);
-                            } else {
-                                $baseUnitRow->update(['cost' => round($newCostBase, 4)]);
-                            }
-                        }
-
-                        // تجهيز بيانات التحديث المباشر للوحدة (التكلفة وسعر البيع الجديد إن وجد)
-                        $unitUpdateData = [
-                            'cost' => (float) $item['unit_cost'],
-                        ];
-
-                        if (isset($item['selling_price']) && !is_null($item['selling_price'])) {
-                            $unitUpdateData['price'] = (float) $item['selling_price'];
-                        }
-
-                        $itemUnit->update($unitUpdateData);
+                        $this->syncItemCostsAndPrices($itemModel, $itemUnit, $item, $unitFactor);
                     }
                 }
 
-                // 2. تسجيل الحركة المخزنية وتحديث الـ Cache بمعرف المصفوفة الجديد
+                // 2. تسجيل الحركة المخزنية وتحديث الـ Cache بمعرف المصفوفة
                 $this->stockService->recordMovement(
                     $item['item_id'],
                     $purchase->store_id,
@@ -145,13 +100,14 @@ class PurchaseService
                 'items.purchase',
                 'items.item.stocks',
                 'items.item.units.unit',
-                'items.itemUnit.unit'
+                'items.itemUnit.unit',
+                'currency'
             ]);
         });
     }
 
     /**
-     * معالجة تعديل وتحديث فاتورة قائمة بشكل فوري وآمن
+     * معالجة تعديل وتحديث فاتورة قائمة بشكل فوري وآمن مع دعم التكلفة الأجنبية
      */
     public function updatePurchase(Purchase $purchase, array $data): Purchase
     {
@@ -164,8 +120,6 @@ class PurchaseService
                 $oldEntry = JournalEntry::find($purchase->journal_entry_id);
                 if ($oldEntry) {
                     $this->journalService->deleteEntry($oldEntry);
-
-                    // تنظيف السطر نهائياً من قاعدة البيانات لتفريغ الـ Unique Index وتجنب الكراش 1062
                     $oldEntry->forceDelete();
                 }
             }
@@ -184,73 +138,28 @@ class PurchaseService
                     ->firstOrFail();
 
                 $purchaseItem = $purchase->items()->create([
-                    'item_id'         => $item['item_id'],
-                    'item_unit_id'    => $itemUnit->id,
-                    'quantity'        => $item['quantity'],
-                    'unit_cost'       => $item['unit_cost'],
-                    'profit_margin'   => $item['profit_margin'] ?? 0.00,
-                    'selling_price'   => $item['selling_price'] ?? null,
-                    'expiry_date'     => $item['expiry_date'] ?? null,
-                    'subtotal'        => $item['subtotal'],
-                    'discount_amount' => $item['discount_amount'] ?? 0.00,
-                    'grand_total'     => $item['grand_total'],
+                    'item_id'           => $item['item_id'],
+                    'item_unit_id'      => $itemUnit->id,
+                    'quantity'          => $item['quantity'],
+                    'unit_cost'         => $item['unit_cost'],
+                    'foreign_unit_cost' => $item['foreign_unit_cost'] ?? null,
+                    'profit_margin'     => $item['profit_margin'] ?? 0.00,
+                    'selling_price'     => $item['selling_price'] ?? null,
+                    'expiry_date'       => $item['expiry_date'] ?? null,
+                    'subtotal'          => $item['subtotal'],
+                    'discount_amount'   => $item['discount_amount'] ?? 0.00,
+                    'grand_total'       => $item['grand_total'],
                 ]);
 
                 $qty = $purchase->invoice_type === 'purchase' ? $item['quantity'] : -$item['quantity'];
                 $unitName = $itemUnit->unit->name ?? 'حبة';
                 $unitFactor = (float) $itemUnit->conversion_factor;
 
-                // 1. الحسبة المالية للمتوسط المرجح وتحديث كرت الصنف ومصفوفة الوحدات
+                // 1. محرك اعتماد سعر آخر شراء وتحديث كرت الصنف وكافة مصفوفة الوحدات والأسعار والتكلفة الأجنبية
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
-                        // تحديث نسبة الربح وتاريخ الصلاحية في كرت الصنف الأساسي إن وجدا
-                        $itemUpdateData = [];
-
-                        if (isset($item['profit_margin']) && !is_null($item['profit_margin'])) {
-                            $itemUpdateData['profit_margin'] = (float) $item['profit_margin'];
-                        }
-
-                        if (isset($item['expiry_date']) && !empty($item['expiry_date'])) {
-                            $itemUpdateData['expiry_date'] = $item['expiry_date'];
-                        }
-
-                        if (!empty($itemUpdateData)) {
-                            $itemModel->update($itemUpdateData);
-                        }
-
-                        $baseUnitRow = ItemUnit::where('item_id', $itemModel->id)
-                            ->where('unit_id', $itemModel->base_unit_id)
-                            ->first();
-
-                        $currentQty = (float) ItemStock::where('item_id', $item['item_id'])->sum('current_quantity');
-                        $oldCost = $baseUnitRow ? (float) $baseUnitRow->cost : 0.00;
-
-                        $unitFactor = (float) ($unitFactor > 0 ? $unitFactor : 1.00);
-                        $newQtyBase = (float) $item['quantity'] * $unitFactor;
-                        $newCostBase = (float) $item['unit_cost'] / $unitFactor;
-
-                        $totalQty = $currentQty + $newQtyBase;
-
-                        if ($baseUnitRow) {
-                            if ($totalQty > 0) {
-                                $newWeightedCost = (($currentQty * $oldCost) + ($newQtyBase * $newCostBase)) / $totalQty;
-                                $baseUnitRow->update(['cost' => round($newWeightedCost, 4)]);
-                            } else {
-                                $baseUnitRow->update(['cost' => round($newCostBase, 4)]);
-                            }
-                        }
-
-                        // مزامنة تكلفة الشراء وسعر البيع الجديد داخل مصفوفة الوحدات
-                        $unitUpdateData = [
-                            'cost' => (float) $item['unit_cost'],
-                        ];
-
-                        if (isset($item['selling_price']) && !is_null($item['selling_price'])) {
-                            $unitUpdateData['price'] = (float) $item['selling_price'];
-                        }
-
-                        $itemUnit->update($unitUpdateData);
+                        $this->syncItemCostsAndPrices($itemModel, $itemUnit, $item, $unitFactor);
                     }
                 }
 
@@ -269,7 +178,7 @@ class PurchaseService
                 );
             }
 
-            // إعادة توليد القيد النظيف وتحديث الفاتورة بالمعرف الجديد للربط المالي الصارم
+            // إعادة توليد القيد وتحديث الفاتورة بالمعرف الجديد للربط المالي الصارم
             $newEntry = $this->generateJournalEntry($purchase);
             $purchase->update(['journal_entry_id' => $newEntry->id]);
 
@@ -277,7 +186,8 @@ class PurchaseService
                 'items.purchase',
                 'items.item.stocks',
                 'items.item.units.unit',
-                'items.itemUnit.unit'
+                'items.itemUnit.unit',
+                'currency'
             ]);
         });
     }
@@ -302,19 +212,123 @@ class PurchaseService
     }
 
     /**
-     * توليد القيد المحاسبي المتوافق مع حسابات الشجرة التجميعية الثابتة هاردكور والـ Sub-ledgers المساعده
+     * مزامنة تكاليف الوحدات وسعر الصنف والتكلفة الأجنبية وفق معيار سعر آخر شراء وتحديث الأسعار التلقائية
+     */
+    protected function syncItemCostsAndPrices(Item $itemModel, ItemUnit $purchasedUnit, array $itemData, float $unitFactor): void
+    {
+        // 1. تحديث نسبة الربح وتاريخ الصلاحية في كرت الصنف الأساسي إن وجدا
+        $itemUpdateData = [];
+
+        if (isset($itemData['profit_margin']) && !is_null($itemData['profit_margin'])) {
+            $itemUpdateData['profit_margin'] = (float) $itemData['profit_margin'];
+        }
+
+        if (isset($itemData['expiry_date']) && !empty($itemData['expiry_date'])) {
+            $itemUpdateData['expiry_date'] = $itemData['expiry_date'];
+        }
+
+        if (!empty($itemUpdateData)) {
+            $itemModel->update($itemUpdateData);
+        }
+
+        // 2. حساب تكلفة الوحدة الصغرى القياسية وفق سعر آخر شراء بالعملة المحلية والأجنبية
+        $unitFactor = (float) ($unitFactor > 0 ? $unitFactor : 1.00);
+        $newBaseCost = (float) $itemData['unit_cost'] / $unitFactor;
+
+        $hasForeignCost = isset($itemData['foreign_unit_cost']) && !is_null($itemData['foreign_unit_cost']) && (float) $itemData['foreign_unit_cost'] > 0;
+        $newBaseForeignCost = $hasForeignCost ? ((float) $itemData['foreign_unit_cost'] / $unitFactor) : null;
+
+        // 3. جلب كافة وحدات الصنف ومزامنة تكلفتها بناءً على معامل تحويل كل وحدة
+        $allUnits = ItemUnit::with('prices')->where('item_id', $itemModel->id)->get();
+        $margin = (float) ($itemModel->profit_margin ?? 0);
+        $pricingPolicy = $itemModel->pricing_policy ?? 'manual';
+        $roundingRule = $itemModel->rounding_rule ?? 'none';
+
+        foreach ($allUnits as $unit) {
+            $factor = (float) ($unit->conversion_factor > 0 ? $unit->conversion_factor : 1.00);
+            $calculatedCost = round($newBaseCost * $factor, 4);
+            $calculatedForeignCost = $newBaseForeignCost !== null ? round($newBaseForeignCost * $factor, 4) : $unit->foreign_cost;
+
+            $unitUpdates = [
+                'cost'         => $calculatedCost,
+                'foreign_cost' => $calculatedForeignCost,
+            ];
+
+            // إذا كانت هذه الوحدة هي المشتراة وتم إدخال سعر بيع صريح لها
+            if ($unit->id === $purchasedUnit->id && isset($itemData['selling_price']) && !is_null($itemData['selling_price'])) {
+                $unitUpdates['price'] = (float) $itemData['selling_price'];
+            } elseif ($pricingPolicy === 'auto_indexed' && $margin > 0) {
+                // احتساب سعر البيع تلقائياً إذا كانت السياسة auto_indexed
+                $rawPrice = $calculatedCost * (1 + ($margin / 100));
+                $unitUpdates['price'] = $this->applyRounding($rawPrice, $roundingRule);
+            }
+
+            $unit->update($unitUpdates);
+
+            // تحديث فئات الأسعار التابعة للوحدة في حال التسعير التلقائي
+            if ($pricingPolicy === 'auto_indexed' && isset($unitUpdates['price']) && $unit->prices->isNotEmpty()) {
+                foreach ($unit->prices as $priceRow) {
+                    $discount = (float) ($priceRow->discount_percentage ?? 0);
+                    $discountedPrice = $unitUpdates['price'] * (1 - ($discount / 100));
+                    $priceRow->update([
+                        'price' => $this->applyRounding($discountedPrice, $roundingRule),
+                    ]);
+                }
+            }
+        }
+    }
+
+    /**
+     * تطبيق قواعد التقريب السعري المعتمدة في النظام
+     */
+    private function applyRounding(float $price, string $rule = 'none'): float
+    {
+        if ($price <= 0) {
+            return 0.00;
+        }
+
+        switch ($rule) {
+            case 'nearest_50':
+                return round($price / 50) * 50;
+            case 'nearest_100':
+                return round($price / 100) * 100;
+            case 'nearest_500':
+                return round($price / 500) * 500;
+            case 'psychological_90':
+                $base = 100;
+                $ending = 90;
+                if ($price <= $ending) {
+                    return (float) $ending;
+                }
+                $remainder = fmod($price, $base);
+                $baseFloor = floor($price / base) * $base;
+                return (float) ($remainder <= $ending ? $baseFloor + $ending : $baseFloor + $base + $ending);
+            case 'psychological_900':
+                $base = 1000;
+                $ending = 900;
+                if ($price <= $ending) {
+                    return (float) $ending;
+                }
+                $remainder = fmod($price, $base);
+                $baseFloor = floor($price / base) * $base;
+                return (float) ($remainder <= $ending ? $baseFloor + $ending : $baseFloor + $base + $ending);
+            default:
+                return round($price, 2);
+        }
+    }
+
+    /**
+     * توليد القيد المحاسبي المتوافق مع حسابات الشجرة التجميعية الثابتة والـ Sub-ledgers
      */
     private function generateJournalEntry(Purchase $purchase): JournalEntry
     {
         $lines = [];
 
-        // جلب الحسابات التجميعية الثابتة هاردكور من الشجرة بالأكواد الرئيسية السيادية
         $inventoryAccount = Account::where('code', Account::CODE_INVENTORY)->firstOrFail();
         $treasuryAccount  = Account::where('code', Account::CODE_TREASURY)->firstOrFail();
         $bankAccount      = Account::where('code', Account::CODE_BANKS)->firstOrFail();
         $supplierAccount  = Account::where('code', Account::CODE_SUPPLIERS)->firstOrFail();
 
-        // توجيه الطرف المالي المقابل ديناميكياً بناءً على طريقة السداد والـ Sub-ledger التابع له بالتطابق مع المبيعات
         $financialAccountId = null;
         $financialSubLedgerType = null;
         $financialSubLedgerId = null;
@@ -330,7 +344,7 @@ class PurchaseService
             $financialSubLedgerType = Bank::class;
             $financialSubLedgerId = $purchase->bank_id;
             $paymentLabel = 'صرف بنكي/شبكة بموجب فاتورة مشتريات رقم: ';
-        } else { // credit
+        } else {
             $financialAccountId = $supplierAccount->id;
             $financialSubLedgerType = Supplier::class;
             $financialSubLedgerId = $purchase->supplier_id;
@@ -338,7 +352,6 @@ class PurchaseService
         }
 
         if ($purchase->invoice_type === 'purchase') {
-            // 1. حساب المخزون السلعي التجميعي الرئيسي (أصل) يزيد بالجانب المدين مع ربطه بالمستودع الحالي كـ Sub-ledger
             $lines[] = [
                 'account_id'      => $inventoryAccount->id,
                 'sub_ledger_type' => Store::class,
@@ -348,7 +361,6 @@ class PurchaseService
                 'line_notes'      => 'إثبات بضاعة واردة بموجب فاتورة مشتريات رقم: ' . $purchase->invoice_number,
             ];
 
-            // 2. حساب الطرف المالي التجميعي المقابل يقل أو يزيد التزامه بالجانب الدائن مع تحديد حركته التحليلية كـ Sub-ledger
             $lines[] = [
                 'account_id'      => $financialAccountId,
                 'sub_ledger_type' => $financialSubLedgerType,
@@ -358,8 +370,6 @@ class PurchaseService
                 'line_notes'      => $paymentLabel . $purchase->invoice_number,
             ];
         } else {
-            // حالة المرتجع: عكس التوجيه المالي والتجميعي للقيد بالكامل بالتوافق والربط مع المبيعات
-            // 1. حساب الطرف المالي بالجانب المدين مع الـ Sub-ledger المعتمد تحليلياً
             $lines[] = [
                 'account_id'      => $financialAccountId,
                 'sub_ledger_type' => $financialSubLedgerType,
@@ -369,7 +379,6 @@ class PurchaseService
                 'line_notes'      => 'تسوية استرداد مالي/تخفيض التزام بموجب مرتجع مشتريات رقم: ' . $purchase->invoice_number,
             ];
 
-            // 2. حساب المخزون السلعي التجميعي الرئيسي ينخفض بالبضاعة الخارجة بالجانب الدائن مع الـ Sub-ledger للمستودع
             $lines[] = [
                 'account_id'      => $inventoryAccount->id,
                 'sub_ledger_type' => Store::class,

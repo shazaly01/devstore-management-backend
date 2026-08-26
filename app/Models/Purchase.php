@@ -21,6 +21,8 @@ class Purchase extends Model
         'treasury_id',      // [تحديث مالي]: إدراج الحقل ماليّاً لقنوات الصرف النقدي فور الحفظ
         'bank_id',          // [تحديث مالي]: إدراج الحقل ماليّاً لقنوات الصرف الإلكتروني (الشبكة)
         'supplier_id',
+        'currency_id',      // الارتباط بالعملة المعتمدة للفاتورة
+        'exchange_rate',    // سعر صرف العملة مقابل الجنيه وقت الفاتورة
         'user_id',
         'journal_entry_id', // لربط الفاتورة بقيدها المالي الناتج في اليومية العامة
         'invoice_date',
@@ -34,6 +36,8 @@ class Purchase extends Model
 
     protected $casts = [
         'invoice_sequence' => 'integer',
+        'currency_id'      => 'integer',
+        'exchange_rate'    => 'float',
         'invoice_date'     => 'datetime',
         'subtotal'         => 'float',
         'discount_amount'  => 'float',
@@ -44,33 +48,34 @@ class Purchase extends Model
     /**
      * بوت مدمج (Model Boot) لتوليد الرقم التلقائي النقي والمحمي عند الحفظ الفعلي
      */
-   protected static function boot()
-{
-    parent::boot();
+    protected static function boot()
+    {
+        parent::boot();
 
-    static::creating(function ($purchase) {
-        // 1. الحصول على أعلى قيمة مسلسلة من الفواتير غير المحذوفة فقط
-        $lastSequence = self::where('invoice_type', $purchase->invoice_type)
-            ->whereNull('deleted_at')
-            ->max('invoice_sequence');
+        static::creating(function ($purchase) {
+            // 1. الحصول على أعلى قيمة مسلسلة من الفواتير غير المحذوفة فقط
+            $lastSequence = self::where('invoice_type', $purchase->invoice_type)
+                ->whereNull('deleted_at')
+                ->max('invoice_sequence');
 
-        $nextSequence = $lastSequence ? $lastSequence + 1 : 1;
+            $nextSequence = $lastSequence ? $lastSequence + 1 : 1;
 
-        // 2. التحقق الدفاعي: التأكد من أن الرقم المسلسل التالي غير مستخدم حتى في الفواتير المحذوفة ناعماً
-        while (self::withTrashed()
-            ->where('invoice_type', $purchase->invoice_type)
-            ->where('invoice_sequence', $nextSequence)
-            ->exists()
-        ) {
-            $nextSequence++;
-        }
+            // 2. التحقق الدفاعي: التأكد من أن الرقم المسلسل التالي غير مستخدم حتى في الفواتير المحذوفة ناعماً
+            while (self::withTrashed()
+                ->where('invoice_type', $purchase->invoice_type)
+                ->where('invoice_sequence', $nextSequence)
+                ->exists()
+            ) {
+                $nextSequence++;
+            }
 
-        // 3. تعيين القيم الجديدة
-        $purchase->invoice_sequence = $nextSequence;
-        $prefix = $purchase->invoice_type === 'purchase' ? 'PUR-' : 'PR-';
-        $purchase->invoice_number = $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
-    });
-}
+            // 3. تعيين القيم الجديدة
+            $purchase->invoice_sequence = $nextSequence;
+            $prefix = $purchase->invoice_type === 'purchase' ? 'PUR-' : 'PR-';
+            $purchase->invoice_number = $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
+        });
+    }
+
     /**
      * ارتباط المرتجع بالفاتورة الأصلية (في حال كان المستند من نوع return)
      */
@@ -93,6 +98,14 @@ class Purchase extends Model
     public function items(): HasMany
     {
         return $this->hasMany(PurchaseItem::class, 'purchase_id');
+    }
+
+    /**
+     * ارتباط الفاتورة بالعملة
+     */
+    public function currency(): BelongsTo
+    {
+        return $this->belongsTo(Currency::class, 'currency_id');
     }
 
     /**

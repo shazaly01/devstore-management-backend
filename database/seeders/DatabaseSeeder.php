@@ -21,6 +21,8 @@ class DatabaseSeeder extends Seeder
             // 3. زرع حسابات المستخدمين وربطهم بالأدوار والصلاحيات
             UserSeeder::class,
 
+            CurrencySeeder::class,
+
             PriceListSeeder::class,
 
         ]);
