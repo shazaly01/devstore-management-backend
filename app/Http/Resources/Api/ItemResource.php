@@ -65,6 +65,7 @@ class ItemResource extends JsonResource
                     'unit_name'         => $itemUnit->unit?->name,
                     'conversion_factor' => (float) $itemUnit->conversion_factor,
                     'cost'              => (float) $itemUnit->cost,
+                    'foreign_cost'      => $itemUnit->foreign_cost !== null ? (float) $itemUnit->foreign_cost : null,
                     'price'             => (float) $itemUnit->price,
 
                     // الباركودات اللانهائية التابعة لهذه الوحدة بالتحديد

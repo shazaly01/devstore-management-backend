@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\DB;
 class ForeignCostSetupService
 {
     /**
-     * توليد جدول المعاينة لتأصيل التكلفة الأجنبية بالخيارات الحسابية الثلاثة
+     * توليد جدول المعاينة لتأصيل التكلفة الأجنبية بالخيارات الحسابية الثلاثة بدقة تامة
      */
     public function preview(array $filters): array
     {
@@ -28,10 +28,13 @@ class ForeignCostSetupService
             });
         }
 
+        // جلب التصنيف المحدد وكافة التصنيفات المتفرعة عنه بالاعتماد على حقل path الشجري
         if (!empty($filters['category_id'])) {
             $category = Category::find($filters['category_id']);
             if ($category) {
-                $categoryIds = Category::where('path', 'like', $category->path . '%')->pluck('id');
+                $categoryIds = Category::where('path', 'like', $category->path . '%')
+                    ->orWhere('id', $category->id)
+                    ->pluck('id');
                 $query->whereIn('category_id', $categoryIds);
             }
         }
@@ -42,13 +45,15 @@ class ForeignCostSetupService
 
         $query->chunk(100, function ($items) use (&$previewData, $filters, $exchangeRate, $method) {
             foreach ($items as $item) {
+                // تحديد الوحدة الأساسية للصنف
                 $baseUnit = $item->units->firstWhere('unit_id', $item->base_unit_id)
                     ?: $item->units->firstWhere('conversion_factor', 1.0)
                     ?: $item->units->first();
 
-                $baseForeignCost = null;
+                $rawBaseForeignCost = null;
                 if ($baseUnit) {
-                    $baseForeignCost = $this->calculateForeignCost(
+                    // احتساب التكلفة الأجنبية الخام للوحدة الأساسية دون تقريب مبكر للحفاظ على الدقة
+                    $rawBaseForeignCost = $this->calculateRawForeignCost(
                         (float) $baseUnit->cost,
                         (float) $baseUnit->price,
                         $exchangeRate,
@@ -63,10 +68,20 @@ class ForeignCostSetupService
                     $currentCost  = (float) $itemUnit->cost;
                     $factor       = (float) ($itemUnit->conversion_factor ?: 1.0);
 
-                    // احتساب التكلفة المقترحة للوحدة (مباشرة أو مضروبة بمعامل التحويل)
-                    $suggestedForeignCost = ($baseForeignCost !== null)
-                        ? round($baseForeignCost * $factor, 4)
-                        : $this->calculateForeignCost($currentCost, $currentPrice, $exchangeRate, $method, $filters, (float) $item->profit_margin);
+                    // احتساب التكلفة الأجنبية المقترحة للوحدة اعتماداً على المعامل وبدقة 4 خانات
+                    if ($rawBaseForeignCost !== null) {
+                        $suggestedForeignCost = round($rawBaseForeignCost * $factor, 4);
+                    } else {
+                        $unitRawCost = $this->calculateRawForeignCost(
+                            $currentCost,
+                            $currentPrice,
+                            $exchangeRate,
+                            $method,
+                            $filters,
+                            (float) $item->profit_margin
+                        );
+                        $suggestedForeignCost = round($unitRawCost, 4);
+                    }
 
                     $previewData[] = [
                         'item_id'                => $item->id,
@@ -77,9 +92,11 @@ class ForeignCostSetupService
                         'conversion_factor'      => $factor,
                         'current_cost'           => $currentCost,
                         'current_price'          => $currentPrice,
-                        'current_foreign_cost'   => $itemUnit->foreign_cost ? (float) $itemUnit->foreign_cost : null,
+                        'current_foreign_cost'   => $itemUnit->foreign_cost !== null ? (float) $itemUnit->foreign_cost : null,
                         'suggested_foreign_cost' => $suggestedForeignCost,
                         'purchase_currency_id'   => $item->purchase_currency_id,
+                        'purchase_currency_code' => $item->purchaseCurrency?->code,
+                        'purchase_currency_name' => $item->purchaseCurrency?->name,
                     ];
                 }
             }
@@ -89,9 +106,9 @@ class ForeignCostSetupService
     }
 
     /**
-     * احتساب التكلفة الأجنبية التقديرية بناءً على المعادلة المحددة
+     * احتساب القيمة الخام الدقيقة للتكلفة الأجنبية دون تقريب مسبق
      */
-    protected function calculateForeignCost(
+    protected function calculateRawForeignCost(
         float $cost,
         float $price,
         float $exchangeRate,
@@ -104,32 +121,32 @@ class ForeignCostSetupService
         }
 
         return match ($method) {
-            // 1. من التكلفة المحلية وسعر الصرف التاريخي
-            'from_cost_rate' => round($cost / $exchangeRate, 4),
+            // 1. استنتاج التكلفة الأجنبية من التكلفة المحلية وسعر الصرف
+            'from_cost_rate' => $cost / $exchangeRate,
 
-            // 2. بالهندسة العكسية من سعر البيع وهامش الربح
+            // 2. بالهندسة العكسية من سعر البيع وهامش الربح الفعلي (Margin)
             'reverse_from_price_margin' => (function () use ($price, $exchangeRate, $filters, $itemProfitMargin) {
                 $margin = isset($filters['profit_margin']) && $filters['profit_margin'] !== ''
                     ? (float) $filters['profit_margin']
                     : $itemProfitMargin;
 
-                $estimatedCost = $margin > 0 ? ($price / (1 + ($margin / 100))) : $price;
-                return round($estimatedCost / $exchangeRate, 4);
+                $estimatedCost = $price * (1 - ($margin / 100));
+                return max(0.0, $estimatedCost / $exchangeRate);
             })(),
 
             // 3. بنسبة خصم مئوية مباشرة من سعر البيع
             'ratio_from_price' => (function () use ($price, $exchangeRate, $filters) {
                 $marginRatio = (float) ($filters['margin_ratio'] ?? 20.0);
                 $estimatedCost = $price * (1 - ($marginRatio / 100));
-                return round($estimatedCost / $exchangeRate, 4);
+                return max(0.0, $estimatedCost / $exchangeRate);
             })(),
 
-            default => round($cost / $exchangeRate, 4),
+            default => $cost / $exchangeRate,
         };
     }
 
     /**
-     * حفظ وتثبيت التكلفة الأجنبية والعملة المرجعية في قاعدة البيانات دفعة واحدة
+     * حفظ وتثبيت التكلفة الأجنبية والعملة المرجعية في قاعدة البيانات بأمان وسرعة أداء مجمعة
      */
     public function apply(array $data): array
     {
@@ -142,22 +159,23 @@ class ForeignCostSetupService
                 $itemUnit = ItemUnit::find($itemData['item_unit_id']);
                 if ($itemUnit) {
                     $itemUnit->update([
-                        'foreign_cost' => (float) $itemData['foreign_cost'],
+                        'foreign_cost' => round((float) $itemData['foreign_cost'], 4),
                     ]);
                     $updatedUnitsCount++;
                     $updatedItemIds[] = $itemUnit->item_id;
                 }
             }
 
-            // تحديث العملة المرجعية للأصناف المعدلة
-            if (!empty($updatedItemIds)) {
-                Item::whereIn('id', array_unique($updatedItemIds))
+            // تحديث العملة المرجعية للشراء للأصناف المعدلة فقط
+            $uniqueItemIds = array_values(array_unique($updatedItemIds));
+            if (!empty($uniqueItemIds)) {
+                Item::whereIn('id', $uniqueItemIds)
                     ->update(['purchase_currency_id' => $currencyId]);
             }
 
             return [
                 'updated_units_count' => $updatedUnitsCount,
-                'updated_items_count' => count(array_unique($updatedItemIds)),
+                'updated_items_count' => count($uniqueItemIds),
             ];
         });
     }
