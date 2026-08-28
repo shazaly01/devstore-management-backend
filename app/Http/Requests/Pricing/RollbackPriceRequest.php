@@ -22,8 +22,9 @@ class RollbackPriceRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'batch_id' => ['required', 'string', 'exists:item_price_histories,batch_id'],
-            'notes'    => ['nullable', 'string', 'max:1000'],
+            'main_id'    => ['required_without:batch_code', 'nullable', 'integer', 'exists:item_price_history_mains,id'],
+            'batch_code' => ['required_without:main_id', 'nullable', 'string', 'exists:item_price_history_mains,batch_code'],
+            'notes'      => ['nullable', 'string', 'max:1000'],
         ];
     }
 
@@ -35,8 +36,24 @@ class RollbackPriceRequest extends FormRequest
     public function attributes(): array
     {
         return [
-            'batch_id' => 'رقم دفعة التسعير',
-            'notes'    => 'سبب التراجع / الملاحظات',
+            'main_id'    => 'معرف دفعة التسعير',
+            'batch_code' => 'كود دفعة التسعير',
+            'notes'      => 'سبب التراجع / الملاحظات',
+        ];
+    }
+
+    /**
+     * Custom validation messages.
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'main_id.required_without'    => 'يرجى تحديد معرف الدفعة المراد التراجع عنها.',
+            'main_id.exists'              => 'دفعة التسعير المحددة غير موجودة.',
+            'batch_code.required_without' => 'يرجى إدخال كود الدفعة المراد التراجع عنها.',
+            'batch_code.exists'           => 'كود دفعة التسعير غير موجود بالنظام.',
         ];
     }
 }

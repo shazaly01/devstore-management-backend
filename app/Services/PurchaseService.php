@@ -69,11 +69,11 @@ class PurchaseService
                 $unitName = $itemUnit->unit->name ?? 'حبة';
                 $unitFactor = (float) $itemUnit->conversion_factor;
 
-                // 1. محرك اعتماد سعر آخر شراء وتحديث كرت الصنف وكافة مصفوفة الوحدات والأسعار والتكلفة الأجنبية
+                // 1. محرك اعتماد سعر آخر شراء وتحديث كرت الصنف والعملة وكافة مصفوفة الوحدات والأسعار
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
-                        $this->syncItemCostsAndPrices($itemModel, $itemUnit, $item, $unitFactor);
+                        $this->syncItemCostsAndPrices($purchase, $itemModel, $itemUnit, $item, $unitFactor);
                     }
                 }
 
@@ -155,11 +155,11 @@ class PurchaseService
                 $unitName = $itemUnit->unit->name ?? 'حبة';
                 $unitFactor = (float) $itemUnit->conversion_factor;
 
-                // 1. محرك اعتماد سعر آخر شراء وتحديث كرت الصنف وكافة مصفوفة الوحدات والأسعار والتكلفة الأجنبية
+                // 1. محرك اعتماد سعر آخر شراء وتحديث كرت الصنف والعملة وكافة مصفوفة الوحدات والأسعار
                 if ($purchase->invoice_type === 'purchase') {
                     $itemModel = Item::find($item['item_id']);
                     if ($itemModel) {
-                        $this->syncItemCostsAndPrices($itemModel, $itemUnit, $item, $unitFactor);
+                        $this->syncItemCostsAndPrices($purchase, $itemModel, $itemUnit, $item, $unitFactor);
                     }
                 }
 
@@ -212,12 +212,16 @@ class PurchaseService
     }
 
     /**
-     * مزامنة تكاليف الوحدات وسعر الصنف والتكلفة الأجنبية وفق معيار سعر آخر شراء وتحديث الأسعار التلقائية
+     * مزامنة تكاليف الوحدات وسعر الصنف والعملة والتكلفة الأجنبية وفق معيار سعر آخر شراء
      */
-    protected function syncItemCostsAndPrices(Item $itemModel, ItemUnit $purchasedUnit, array $itemData, float $unitFactor): void
+    protected function syncItemCostsAndPrices(Purchase $purchase, Item $itemModel, ItemUnit $purchasedUnit, array $itemData, float $unitFactor): void
     {
-        // 1. تحديث نسبة الربح وتاريخ الصلاحية في كرت الصنف الأساسي إن وجدا
+        // 1. تحديث بيانات كرت الصنف الأساسي (العملة المرجعية للشراء، هامش الربح، وتاريخ الصلاحية)
         $itemUpdateData = [];
+
+        if ($purchase->currency_id) {
+            $itemUpdateData['purchase_currency_id'] = $purchase->currency_id;
+        }
 
         if (isset($itemData['profit_margin']) && !is_null($itemData['profit_margin'])) {
             $itemUpdateData['profit_margin'] = (float) $itemData['profit_margin'];
@@ -231,14 +235,26 @@ class PurchaseService
             $itemModel->update($itemUpdateData);
         }
 
-        // 2. حساب تكلفة الوحدة الصغرى القياسية وفق سعر آخر شراء بالعملة المحلية والأجنبية
+        // 2. معالجة وتدقيق التكلفة المحلية والأجنبية وسعر الصرف
+        $exchangeRate = (float) ($purchase->exchange_rate > 0 ? $purchase->exchange_rate : 1.00);
+        $unitCost = (float) ($itemData['unit_cost'] ?? 0);
+        $foreignUnitCost = isset($itemData['foreign_unit_cost']) && !is_null($itemData['foreign_unit_cost']) && (float) $itemData['foreign_unit_cost'] > 0
+            ? (float) $itemData['foreign_unit_cost']
+            : null;
+
+        // اشتقاق التكلفة الأجنبية إذا كانت غير مرسلة وكانت الفاتورة بعملة ذات سعر صرف
+        if ($foreignUnitCost === null && $purchase->currency_id && $exchangeRate > 0 && $unitCost > 0) {
+            $foreignUnitCost = $unitCost / $exchangeRate;
+        } elseif ($unitCost <= 0 && $foreignUnitCost !== null && $exchangeRate > 0) {
+            $unitCost = $foreignUnitCost * $exchangeRate;
+        }
+
+        // 3. حساب تكلفة الوحدة الصغرى القياسية
         $unitFactor = (float) ($unitFactor > 0 ? $unitFactor : 1.00);
-        $newBaseCost = (float) $itemData['unit_cost'] / $unitFactor;
+        $newBaseCost = $unitCost / $unitFactor;
+        $newBaseForeignCost = $foreignUnitCost !== null ? ($foreignUnitCost / $unitFactor) : null;
 
-        $hasForeignCost = isset($itemData['foreign_unit_cost']) && !is_null($itemData['foreign_unit_cost']) && (float) $itemData['foreign_unit_cost'] > 0;
-        $newBaseForeignCost = $hasForeignCost ? ((float) $itemData['foreign_unit_cost'] / $unitFactor) : null;
-
-        // 3. جلب كافة وحدات الصنف ومزامنة تكلفتها بناءً على معامل تحويل كل وحدة
+        // 4. جلب كافة وحدات الصنف ومزامنة تكلفتها بناءً على معامل تحويل كل وحدة
         $allUnits = ItemUnit::with('prices')->where('item_id', $itemModel->id)->get();
         $margin = (float) ($itemModel->profit_margin ?? 0);
         $pricingPolicy = $itemModel->pricing_policy ?? 'manual';
@@ -301,7 +317,7 @@ class PurchaseService
                     return (float) $ending;
                 }
                 $remainder = fmod($price, $base);
-                $baseFloor = floor($price / base) * $base;
+                $baseFloor = floor($price / $base) * $base;
                 return (float) ($remainder <= $ending ? $baseFloor + $ending : $baseFloor + $base + $ending);
             case 'psychological_900':
                 $base = 1000;
@@ -310,7 +326,7 @@ class PurchaseService
                     return (float) $ending;
                 }
                 $remainder = fmod($price, $base);
-                $baseFloor = floor($price / base) * $base;
+                $baseFloor = floor($price / $base) * $base;
                 return (float) ($remainder <= $ending ? $baseFloor + $ending : $baseFloor + $base + $ending);
             default:
                 return round($price, 2);

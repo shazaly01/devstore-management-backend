@@ -38,7 +38,7 @@ class PurchaseItemResource extends JsonResource
             // الرصيد المخزني الفعلي للصنف في مستودع الفاتورة
             'current_stock'     => (float) ($this->item->stocks->where('store_id', $this->purchase->store_id)->first()?->current_quantity ?? 0),
 
-            // مصفوفة الوحدات البديلة المتاحة للصنف مع معاملات التحويل والتسعير
+            // مصفوفة الوحدات البديلة المتاحة للصنف مع معاملات التحويل والتسعير والتكلفة الأجنبية
             'available_units'   => $this->item->units->map(function ($itemUnit) {
                 return [
                     'id'                => $itemUnit->id,
@@ -46,6 +46,7 @@ class PurchaseItemResource extends JsonResource
                     'unit_name'         => $itemUnit->unit?->name ?? null,
                     'conversion_factor' => (float) $itemUnit->conversion_factor,
                     'cost'              => (float) $itemUnit->cost,
+                    'foreign_cost'      => $itemUnit->foreign_cost !== null ? (float) $itemUnit->foreign_cost : null,
                     'price'             => (float) $itemUnit->price,
                 ];
             }),

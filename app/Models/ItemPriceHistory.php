@@ -17,6 +17,7 @@ class ItemPriceHistory extends Model
      * @var array<int, string>
      */
     protected $fillable = [
+        'item_price_history_main_id',
         'batch_id',
         'item_id',
         'item_unit_id',
@@ -39,19 +40,28 @@ class ItemPriceHistory extends Model
      * @var array<string, string>
      */
     protected $casts = [
-        'batch_id'          => 'string',
-        'item_id'           => 'integer',
-        'item_unit_id'      => 'integer',
-        'price_list_id'     => 'integer',
-        'old_price'         => 'float',
-        'new_price'         => 'float',
-        'old_cost'          => 'float',
-        'new_cost'          => 'float',
-        'currency_id'       => 'integer',
-        'exchange_rate'     => 'float',
-        'change_percentage' => 'float',
-        'user_id'           => 'integer',
+        'item_price_history_main_id' => 'integer',
+        'batch_id'                   => 'string',
+        'item_id'                    => 'integer',
+        'item_unit_id'               => 'integer',
+        'price_list_id'              => 'integer',
+        'old_price'                  => 'float',
+        'new_price'                  => 'float',
+        'old_cost'                   => 'float',
+        'new_cost'                   => 'float',
+        'currency_id'                => 'integer',
+        'exchange_rate'              => 'float',
+        'change_percentage'          => 'float',
+        'user_id'                    => 'integer',
     ];
+
+    /**
+     * الارتباط بسجل رأس الدفعة المجمعة
+     */
+    public function main(): BelongsTo
+    {
+        return $this->belongsTo(ItemPriceHistoryMain::class, 'item_price_history_main_id');
+    }
 
     /**
      * الارتباط بالصنف

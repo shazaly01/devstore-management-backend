@@ -135,6 +135,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/radar', [PricingController::class, 'radar']);
         Route::post('/rollback', [PricingController::class, 'rollback']);
         Route::get('/history', [PricingController::class, 'history']);
+        Route::get('/batches', [PricingController::class, 'batches']);
+        Route::get('/batches/{id}', [PricingController::class, 'batchDetails']);
         Route::post('/foreign-cost/preview', [PricingController::class, 'previewForeignCost']);
         Route::post('/foreign-cost/apply', [PricingController::class, 'applyForeignCost']);
     });

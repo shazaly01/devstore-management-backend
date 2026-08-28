@@ -11,7 +11,9 @@ use App\Http\Requests\Pricing\ApplyForeignCostRequest;
 use App\Http\Resources\Api\Pricing\BulkRepricingPreviewResource;
 use App\Http\Resources\Api\Pricing\MarginRadarResource;
 use App\Http\Resources\Api\Pricing\ItemPriceHistoryResource;
+use App\Http\Resources\Api\Pricing\ItemPriceHistoryMainResource;
 use App\Models\ItemPriceHistory;
+use App\Models\ItemPriceHistoryMain;
 use App\Services\Pricing\BulkRepricingService;
 use App\Services\Pricing\MarginRadarService;
 use App\Services\Pricing\PriceRollbackService;
@@ -32,90 +34,182 @@ class PricingController extends Controller
     ) {}
 
     /**
-     * معاينة نتائج إعادة التسعير الجماعي قبل التطبيق[cite: 12]
+     * معاينة نتائج إعادة التسعير الجماعي قبل التطبيق
      */
     public function preview(PreviewBulkRepriceRequest $request): AnonymousResourceCollection
     {
-        $this->authorize('bulkReprice', ItemPriceHistory::class); //[cite: 12]
-        $previewData = $this->bulkRepricingService->preview($request->validated()); //[cite: 12]
-        return BulkRepricingPreviewResource::collection($previewData); //[cite: 12]
+        $this->authorize('bulkReprice', ItemPriceHistory::class);
+        $previewData = $this->bulkRepricingService->preview($request->validated());
+        return BulkRepricingPreviewResource::collection($previewData);
     }
 
     /**
-     * تطبيق واعتماد دفعة الأسعار الجديدة وتوثيقها في السجل[cite: 12]
+     * تطبيق واعتماد دفعة الأسعار الجديدة وتوثيقها في رأس الدفعة وسجل التفاصيل
      */
     public function apply(ApplyBulkRepriceRequest $request): JsonResponse
     {
-        $this->authorize('bulkReprice', ItemPriceHistory::class); //[cite: 12]
-        $result = $this->bulkRepricingService->apply($request->validated(), Auth::id()); //[cite: 12]
+        $this->authorize('bulkReprice', ItemPriceHistory::class);
+        $result = $this->bulkRepricingService->apply($request->validated(), Auth::id());
 
         return response()->json([
             'status'        => 'success',
-            'message'       => 'تم تطبيق الأسعار الجديدة بنجاح وتوثيق العملية في سجل التاريخ.',
+            'message'       => 'تم تطبيق الأسعار الجديدة بنجاح وإنشاء دفعة التسعير في الأرشيف.',
+            'main_id'       => $result['main_id'],
+            'batch_code'    => $result['batch_code'],
             'batch_id'      => $result['batch_id'],
             'updated_count' => $result['updated_count'],
-        ]); //[cite: 12]
+        ]);
     }
 
     /**
-     * عرض رادار الأصناف المهددة بتآكل الهامش أو الواقعة تحت الحد الأدنى[cite: 12]
+     * استعراض أرشيف مجموعات ودفعات التسعير مع الفلترة والفرز الذكي
      */
-    public function radar(Request $request): AnonymousResourceCollection
+    public function batches(Request $request): AnonymousResourceCollection
     {
-        $this->authorize('viewRadar', ItemPriceHistory::class); //[cite: 12]
-        $filters = $request->only(['category_id']); //[cite: 12]
-        $radarData = $this->marginRadarService->getAtRiskItems($filters); //[cite: 12]
-        return MarginRadarResource::collection($radarData); //[cite: 12]
+        $this->authorize('bulkReprice', ItemPriceHistory::class);
+
+        $query = ItemPriceHistoryMain::query()
+            ->with(['category', 'currency', 'user', 'rolledBackByUser'])
+            ->latest('id');
+
+        if ($request->filled('batch_code')) {
+            $query->where('batch_code', 'like', '%' . $request->query('batch_code') . '%');
+        }
+
+        if ($request->filled('category_id')) {
+            $query->where('category_id', $request->query('category_id'));
+        }
+
+        if ($request->filled('currency_id')) {
+            $query->where('currency_id', $request->query('currency_id'));
+        }
+
+        if ($request->filled('change_type')) {
+            $query->where('change_type', $request->query('change_type'));
+        }
+
+        if ($request->has('is_rolled_back') && $request->query('is_rolled_back') !== null && $request->query('is_rolled_back') !== '') {
+            $query->where('is_rolled_back', filter_var($request->query('is_rolled_back'), FILTER_VALIDATE_BOOLEAN));
+        }
+
+        if ($request->filled('exchange_rate')) {
+            $query->where('exchange_rate', $request->query('exchange_rate'));
+        }
+
+        if ($request->filled('from_date')) {
+            $query->whereDate('created_at', '>=', $request->query('from_date'));
+        }
+
+        if ($request->filled('to_date')) {
+            $query->whereDate('created_at', '<=', $request->query('to_date'));
+        }
+
+        $perPage = (int) $request->query('per_page', 15);
+        return ItemPriceHistoryMainResource::collection($query->paginate($perPage));
     }
 
     /**
-     * التراجع الفوري عن دفعة تسعير كاملة واستعادة الأسعار السابقة[cite: 12]
+     * استعراض تفاصيل دفعة تسعير محددة مع كافة أصنافها ووحداتها
+     */
+    public function batchDetails(int $id): JsonResponse
+    {
+        $this->authorize('bulkReprice', ItemPriceHistory::class);
+
+        $batchMain = ItemPriceHistoryMain::with([
+            'category',
+            'currency',
+            'user',
+            'rolledBackByUser',
+            'details.item',
+            'details.itemUnit.unit',
+            'details.priceList',
+        ])->findOrFail($id);
+
+        return response()->json([
+            'status' => 'success',
+            'data'   => new ItemPriceHistoryMainResource($batchMain),
+        ]);
+    }
+
+    /**
+     * التراجع الفوري عن مجموعة تسعير كاملة واستعادة الأسعار والتكاليف السابقة
      */
     public function rollback(RollbackPriceRequest $request): JsonResponse
     {
-        $this->authorize('rollback', ItemPriceHistory::class); //[cite: 12]
+        $this->authorize('rollback', ItemPriceHistory::class);
 
         try {
             $result = $this->priceRollbackService->rollback(
-                $request->validated('batch_id'),
+                $request->validated(),
                 Auth::id(),
                 $request->validated('notes')
-            ); //[cite: 12]
+            );
 
             return response()->json([
-                'status'            => 'success',
-                'message'           => 'تم التراجع عن دفعة التسعير واستعادة الأسعار السابقة بنجاح.',
-                'rollback_batch_id' => $result['rollback_batch_id'],
-                'original_batch_id' => $result['original_batch_id'],
-                'restored_count'    => $result['restored_count'],
-            ]); //[cite: 12]
+                'status'              => 'success',
+                'message'             => 'تم التراجع عن مجموعة التسعير بنجاح وتوثيق دفعة التراجع.',
+                'main_id'             => $result['main_id'],
+                'batch_code'          => $result['batch_code'],
+                'rollback_main_id'    => $result['rollback_main_id'],
+                'rollback_batch_code' => $result['rollback_batch_code'],
+                'restored_count'      => $result['restored_count'],
+            ]);
         } catch (Exception $e) {
             return response()->json([
                 'status'  => 'error',
                 'message' => $e->getMessage(),
-            ], 422); //[cite: 12]
+            ], 422);
         }
     }
 
     /**
-     * استعراض سجل تاريخ تغييرات الأسعار مع الفلترة[cite: 12]
+     * استعراض سجل تاريخ تغييرات الأسعار الفردي مع الفلترة
      */
     public function history(Request $request): AnonymousResourceCollection
     {
-        $this->authorize('bulkReprice', ItemPriceHistory::class); //[cite: 12]
+        $this->authorize('bulkReprice', ItemPriceHistory::class);
 
         $query = ItemPriceHistory::query()
-            ->with(['item', 'itemUnit.unit', 'priceList', 'currency', 'user'])
-            ->latest('id'); //[cite: 12]
+            ->with(['main', 'item', 'itemUnit.unit', 'priceList', 'currency', 'user'])
+            ->latest('id');
 
-        if ($request->filled('batch_id')) $query->where('batch_id', $request->query('batch_id')); //[cite: 12]
-        if ($request->filled('item_id')) $query->where('item_id', $request->query('item_id')); //[cite: 12]
-        if ($request->filled('change_type')) $query->where('change_type', $request->query('change_type')); //[cite: 12]
-        if ($request->filled('from_date')) $query->whereDate('created_at', '>=', $request->query('from_date')); //[cite: 12]
-        if ($request->filled('to_date')) $query->whereDate('created_at', '<=', $request->query('to_date')); //[cite: 12]
+        if ($request->filled('item_price_history_main_id')) {
+            $query->where('item_price_history_main_id', $request->query('item_price_history_main_id'));
+        }
 
-        $perPage = $request->query('per_page', 25); //[cite: 12]
-        return ItemPriceHistoryResource::collection($query->paginate($perPage)); //[cite: 12]
+        if ($request->filled('batch_id')) {
+            $query->where('batch_id', $request->query('batch_id'));
+        }
+
+        if ($request->filled('item_id')) {
+            $query->where('item_id', $request->query('item_id'));
+        }
+
+        if ($request->filled('change_type')) {
+            $query->where('change_type', $request->query('change_type'));
+        }
+
+        if ($request->filled('from_date')) {
+            $query->whereDate('created_at', '>=', $request->query('from_date'));
+        }
+
+        if ($request->filled('to_date')) {
+            $query->whereDate('created_at', '<=', $request->query('to_date'));
+        }
+
+        $perPage = (int) $request->query('per_page', 25);
+        return ItemPriceHistoryResource::collection($query->paginate($perPage));
+    }
+
+    /**
+     * عرض رادار الأصناف المهددة بتآكل الهامش أو الواقعة تحت الحد الأدنى
+     */
+    public function radar(Request $request): AnonymousResourceCollection
+    {
+        $this->authorize('viewRadar', ItemPriceHistory::class);
+        $filters = $request->only(['category_id']);
+        $radarData = $this->marginRadarService->getAtRiskItems($filters);
+        return MarginRadarResource::collection($radarData);
     }
 
     /**
@@ -124,7 +218,6 @@ class PricingController extends Controller
     public function previewForeignCost(PreviewForeignCostRequest $request): JsonResponse
     {
         $this->authorize('bulkReprice', ItemPriceHistory::class);
-
         $preview = $this->foreignCostSetupService->preview($request->validated());
 
         return response()->json([
@@ -139,7 +232,6 @@ class PricingController extends Controller
     public function applyForeignCost(ApplyForeignCostRequest $request): JsonResponse
     {
         $this->authorize('bulkReprice', ItemPriceHistory::class);
-
         $result = $this->foreignCostSetupService->apply($request->validated());
 
         return response()->json([
