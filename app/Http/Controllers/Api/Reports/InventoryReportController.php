@@ -15,12 +15,12 @@ class InventoryReportController extends Controller
 {
     /**
      * 1. تقرير الأرصدة اللحظية للمستودعات (Current Stock Evaluation)
-     * عرض جرد الكميات الحالية المتوفرة مع تفكيك حركي وديناميكي كامل للمصفوفة اللانهائية لوحدات الأصناف
+     * عرض جرد الكميات الحالية المتوفرة مع تفكيك حركي وديناميكي كامل لمصفوفة الوحدات والأسعار وهوامش الربح
      */
     public function currentStock(Request $request): JsonResponse
     {
-        // التعديل المعماري: شحن علاقة الوحدة الأساسية وعلاقة مصفوفة الوحدات الفرعية المحدثة
-        $query = ItemStock::with(['item.baseUnit', 'item.units.unit', 'store']);
+        $query = ItemStock::whereHas('item')
+            ->with(['item.baseUnit', 'item.units.unit', 'store']);
 
         // فلترة مخصصة حسب المستودع
         if ($request->filled('store_id')) {
@@ -34,7 +34,7 @@ class InventoryReportController extends Controller
             });
         }
 
-        // البحث السريع بالاسم أو الباركود من جدول الباركومترات المحدث
+        // البحث السريع بالاسم أو الباركود
         if ($request->filled('search')) {
             $search = $request->search;
             $query->whereHas('item', function ($q) use ($search) {
@@ -49,14 +49,25 @@ class InventoryReportController extends Controller
 
         $reportData = $stocks->map(function ($stock) {
             $item = $stock->item;
-            $baseQty = (float) $stock->current_quantity; // الكمية الحالية مقاسة بالوحدة الصغرى الأساسية
+            if (!$item) {
+                return null;
+            }
 
-            // جلب تكلفة وسجل الوحدة الأساسية من المصفوفة الوسيطة
-            $baseUnitConfig = $item->units->firstWhere('unit_id', $item->base_unit_id);
+            $baseQty = (float) $stock->current_quantity;
+            $units = $item->units ?? collect();
+
+            // جلب تكلفة وسعر الوحدة الأساسية
+            $baseUnitConfig = $units->firstWhere('unit_id', $item->base_unit_id);
             $baseCost = $baseUnitConfig ? (float) $baseUnitConfig->cost : 0.00;
+            $basePrice = $baseUnitConfig ? (float) $baseUnitConfig->price : 0.00;
 
-            // فرز الوحدات الفرعية الأخرى المتوفرة للصنف ديناميكياً لتغذية الواجهات بدون ترقيع ثابت
-            $nonBaseUnits = $item->units->where('unit_id', '!=', $item->base_unit_id)->values();
+            // احتساب نسبة هامش الربح
+            $profitMarginPercentage = $baseCost > 0
+                ? round((($basePrice - $baseCost) / $baseCost) * 100, 2)
+                : 0.00;
+
+            // فرز الوحدات الفرعية الأخرى المتوفرة للصنف
+            $nonBaseUnits = $units->where('unit_id', '!=', $item->base_unit_id)->values();
             $unit2Config = $nonBaseUnits->get(0);
             $unit3Config = $nonBaseUnits->get(1);
 
@@ -64,24 +75,22 @@ class InventoryReportController extends Controller
             $u3Factor = $unit3Config ? (float) ($unit3Config->conversion_factor > 0 ? $unit3Config->conversion_factor : 1.00) : 1.00;
 
             return [
-                'stock_id'              => $stock->id,
-                'store_name'            => $stock->store->name ?? null,
-                'item_id'               => $item->id,
-                'item_name'             => $item->name,
-                'current_quantity_base' => $baseQty,
-                'unit1_name'            => $item->baseUnit->name ?? null,
+                'stock_id'                => $stock->id,
+                'store_name'              => $stock->store->name ?? null,
+                'item_id'                 => $item->id,
+                'item_name'               => $item->name,
+                'current_quantity_base'   => $baseQty,
+                'unit1_name'              => $item->baseUnit->name ?? null,
 
-                // تفكيك الوحدات الحركية حاسوبياً لضمان توافق الفحوصات والـ JSON Structure القديم والجديد
-                'has_unit2'             => !is_null($unit2Config),
-                'qty_in_unit2'          => $unit2Config ? round($baseQty / $u2Factor, 4) : 0.00,
-                'unit2_name'            => $unit2Config->unit->name ?? null,
+                'has_unit2'               => !is_null($unit2Config),
+                'qty_in_unit2'            => $unit2Config ? round($baseQty / $u2Factor, 4) : 0.00,
+                'unit2_name'              => $unit2Config->unit->name ?? null,
 
-                'has_unit3'             => !is_null($unit3Config),
-                'qty_in_unit3'          => $unit3Config ? round($baseQty / $u3Factor, 4) : 0.00,
-                'unit3_name'            => $unit3Config->unit->name ?? null,
+                'has_unit3'               => !is_null($unit3Config),
+                'qty_in_unit3'            => $unit3Config ? round($baseQty / $u3Factor, 4) : 0.00,
+                'unit3_name'              => $unit3Config->unit->name ?? null,
 
-                // المصفوفة الديناميكية الكاملة للوحدات لدعم اللانهائية في شاشات العرض الحديثة
-                'units_breakdown'       => $item->units->map(function ($u) use ($baseQty) {
+                'units_breakdown'         => $units->map(function ($u) use ($baseQty) {
                     $f = (float) ($u->conversion_factor > 0 ? $u->conversion_factor : 1.00);
                     return [
                         'unit_id'    => $u->unit_id,
@@ -92,20 +101,34 @@ class InventoryReportController extends Controller
                     ];
                 }),
 
-                'unit_cost'             => $baseCost,
-                'total_cost_value'      => round($baseQty * $baseCost, 2)
+                'unit_cost'               => $baseCost,
+                'unit_price'              => $basePrice,
+                'profit_margin_percentage'=> $profitMarginPercentage,
+                'total_cost_value'        => round($baseQty * $baseCost, 2),
+                'total_sale_value'        => round($baseQty * $basePrice, 2)
             ];
-        });
+        })->filter()->values();
+
+        // احتساب الإجماليات العامة لكروت التقرير
+        $totalItems = $reportData->count();
+        $grandTotalQuantity = (float) $reportData->sum('current_quantity_base');
+        $grandTotalCostValue = (float) $reportData->sum('total_cost_value');
+        $grandTotalSaleValue = (float) $reportData->sum('total_sale_value');
 
         return response()->json([
             'success' => true,
+            'summary' => [
+                'total_items'             => $totalItems,
+                'grand_total_quantity'   => $grandTotalQuantity,
+                'grand_total_cost_value' => round($grandTotalCostValue, 2),
+                'grand_total_sale_value' => round($grandTotalSaleValue, 2),
+            ],
             'data'    => $reportData
         ]);
     }
 
     /**
      * 2. كارت حركة الصنف التفصيلي (Stock Card / Item Ledger)
-     * تتبع حركات الصنف التاريخية التراكمية واحتساب الأرصدة الافتتاحية السابقة بدقة مع مصفوفة الوحدات
      */
     public function stockCard(Request $request): JsonResponse
     {
@@ -118,7 +141,6 @@ class InventoryReportController extends Controller
         $fromDate = $request->from_date ? Carbon::parse($request->from_date)->startOfDay() : null;
         $toDate = $request->to_date ? Carbon::parse($request->to_date)->endOfDay() : null;
 
-        // أ: احتساب الرصيد الافتتاحي المتراكم للصنف ما قبل تاريخ البداية المحدد بالفلاتر
         $openingQuery = ItemMovement::where('item_id', $itemId);
         if ($storeId) {
             $openingQuery->where('store_id', $storeId);
@@ -131,7 +153,6 @@ class InventoryReportController extends Controller
             $openingBalance = 0.00;
         }
 
-        // ب: جلب الحركات التفصيلية الفعلية المسجلة داخل النطاق الزمني المحدد
         $movementsQuery = ItemMovement::with(['store', 'itemUnit.unit'])->where('item_id', $itemId);
         if ($storeId) {
             $movementsQuery->where('store_id', $storeId);
@@ -150,7 +171,6 @@ class InventoryReportController extends Controller
         $runningBalance = $openingBalance;
         $reportLines = [];
 
-        // تجميع الحركات وبناء الرصيد التراكمي اللحظي خطوة بخطوة
         foreach ($movements as $move) {
             $baseQty = (float) $move->base_quantity;
             $runningBalance += $baseQty;
@@ -186,11 +206,11 @@ class InventoryReportController extends Controller
 
     /**
      * 3. تقرير تقييم المخزون المالي (Inventory Valuation Report)
-     * احتساب القيمة النقدية الرأسمالية الحالية للبضاعة المخزنة بناءً على تكلفة وحدة الصنف الصغرى بالمصفوفة
      */
     public function stockValuation(Request $request): JsonResponse
     {
-        $query = ItemStock::with(['item.baseUnit', 'item.units', 'store']);
+        $query = ItemStock::whereHas('item')
+            ->with(['item.baseUnit', 'item.units', 'store']);
 
         if ($request->filled('store_id')) {
             $query->where('store_id', $request->store_id);
@@ -201,10 +221,14 @@ class InventoryReportController extends Controller
         $totalValuation = 0.00;
         $itemsData = $stocks->map(function ($stock) use (&$totalValuation) {
             $item = $stock->item;
-            $qty = (float) $stock->current_quantity;
+            if (!$item) {
+                return null;
+            }
 
-            // التعديل المعماري: جلب سعر التكلفة من سطر مصفوفة الوحدات المتطابق مع الوحدة الأساسية
-            $baseUnitConfig = $item->units->firstWhere('unit_id', $item->base_unit_id);
+            $qty = (float) $stock->current_quantity;
+            $units = $item->units ?? collect();
+
+            $baseUnitConfig = $units->firstWhere('unit_id', $item->base_unit_id);
             $cost = $baseUnitConfig ? (float) $baseUnitConfig->cost : 0.00;
 
             $lineValue = $qty * $cost;
@@ -219,7 +243,7 @@ class InventoryReportController extends Controller
                 'unit_cost'        => $cost,
                 'total_value'      => round($lineValue, 2)
             ];
-        });
+        })->filter()->values();
 
         return response()->json([
             'success'               => true,
@@ -230,7 +254,6 @@ class InventoryReportController extends Controller
 
     /**
      * 4. تقرير ملخص التسويات وفروقات الجرد (Stock Adjustments Summary)
-     * مراجعة وتحليل مستندات التسوية وحجم مبالغ العجز الفاشل ومبالغ الفائض المكتشف للفترات
      */
     public function adjustmentsSummary(Request $request): JsonResponse
     {
