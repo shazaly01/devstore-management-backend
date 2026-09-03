@@ -29,7 +29,7 @@ class CustomerController extends Controller
      */
     public function index(): JsonResponse
     {
-        // [تحديث]: تم تضمين 'priceList' في الـ Eager Loading لشحن الفئة فوراً للفرونت إند
+        // تم تضمين 'priceList' في الـ Eager Loading لشحن الفئة فوراً للفرونت إند
         $customers = Customer::with(['account', 'priceList'])
                              ->withSum('journalLines', 'debit')
                              ->withSum('journalLines', 'credit')
@@ -62,7 +62,7 @@ class CustomerController extends Controller
                 'account_id'      => $parentAccount->id,
                 'opening_balance' => 0.00,
                 'current_balance' => 0.00,
-                'price_list_id'   => $validatedData['price_list_id'] ?? null, // [الإضافة الحالية]: تخزين فئة السعر المستهدفة
+                'price_list_id'   => $validatedData['price_list_id'] ?? null,
             ]);
 
             // 2. استدعاء السرفيس لتوليد القيد المدين الموازن وتحديث أرصدة الشجرة والعميل
@@ -70,7 +70,7 @@ class CustomerController extends Controller
                 $this->openingBalanceService->syncOpeningBalance($customer, (float)$validatedData['opening_balance']);
             }
 
-            // [تحديث]: تحميل علاقة فئة السعر لعرض البيانات مكتملة في الاستجابة
+            // تحميل علاقة فئة السعر لعرض البيانات مكتملة في الاستجابة
             $customer->load(['account', 'priceList']);
 
             return response()->json([
@@ -78,7 +78,7 @@ class CustomerController extends Controller
                 'message' => 'تم إنشاء سجل العميل ومزامنة رصيده الافتتاحي بنجاح.',
                 'data'    => new CustomerResource($customer)
             ], 201);
-    });
+        });
     }
 
     /**
@@ -86,7 +86,7 @@ class CustomerController extends Controller
      */
     public function show(Customer $customer): JsonResponse
     {
-        // [تحديث]: تحميل علاقة فئة السعر للعميل المستهدف
+        // تحميل علاقة فئة السعر للعميل المستهدف
         $customer->load(['account', 'priceList'])
                  ->loadSum('journalLines', 'debit')
                  ->loadSum('journalLines', 'credit');
@@ -105,13 +105,13 @@ class CustomerController extends Controller
         $validatedData = $request->validated();
 
         return DB::transaction(function () use ($validatedData, $customer) {
-            // 1. تحديث البيانات الأساسية والائتمانية والتبديل بين فئات الأسعار (مثال ترقية من B إلى A)
+            // 1. تحديث البيانات مع فحص وجود المفاتيح للسماح بتفريغ القيم أو تعيينها كـ null (مثل فئة السعر الافتراضية)
             $customer->update([
                 'name'          => $validatedData['name'],
-                'phone'         => $validatedData['phone'] ?? $customer->phone,
-                'email'         => $validatedData['email'] ?? $customer->email,
-                'credit_limit'  => $validatedData['credit_limit'] ?? $customer->credit_limit,
-                'price_list_id' => $validatedData['price_list_id'] ?? $customer->price_list_id, // [التحديث الحالي]: تعديل فئة السعر
+                'phone'         => array_key_exists('phone', $validatedData) ? $validatedData['phone'] : $customer->phone,
+                'email'         => array_key_exists('email', $validatedData) ? $validatedData['email'] : $customer->email,
+                'credit_limit'  => array_key_exists('credit_limit', $validatedData) ? ($validatedData['credit_limit'] ?? 0.00) : $customer->credit_limit,
+                'price_list_id' => array_key_exists('price_list_id', $validatedData) ? $validatedData['price_list_id'] : $customer->price_list_id,
             ]);
 
             // 2. مزامنة الرصيد الافتتاحي المضمن (استراتيجية مسح الأثر المحاسبي القديم وإعادة البناء)
@@ -119,7 +119,7 @@ class CustomerController extends Controller
                 $this->openingBalanceService->syncOpeningBalance($customer, (float)$validatedData['opening_balance']);
             }
 
-            // [تحديث]: إعادة تحميل الكائن بالروابط وفئة الأسعار المحدثة لوزن مصفوفة الـ JSON المرسلة
+            // إعادة تحميل الكائن بالروابط وفئة الأسعار المحدثة لوزن مصفوفة الـ JSON المرسلة
             $customer->load(['account', 'priceList'])
                      ->loadSum('journalLines', 'debit')
                      ->loadSum('journalLines', 'credit');

@@ -17,6 +17,7 @@ class ItemResource extends JsonResource
     {
         // التقاط معرف المخزن الحالي المرسل من فلاتر الواجهة الأمامية
         $currentStoreId = $request->input('store_id');
+        $minMargin = (float) $this->min_margin_percentage;
 
         return [
             'id'                     => $this->id,
@@ -27,7 +28,7 @@ class ItemResource extends JsonResource
             'purchase_currency_name' => $this->purchaseCurrency?->name,
             'purchase_currency_code' => $this->purchaseCurrency?->code,
             'pricing_policy'         => $this->pricing_policy ?? 'manual',
-            'min_margin_percentage'  => (float) $this->min_margin_percentage,
+            'min_margin_percentage'  => $minMargin,
             'rounding_rule'          => $this->rounding_rule ?? 'none',
             'category_id'            => $this->category_id,
             'category_path'          => $this->category_path,
@@ -58,15 +59,19 @@ class ItemResource extends JsonResource
             }),
 
             // تجميع الهيكل الشجري اللانهائي والمصفوفة السعرية بالكامل للفرونت إند
-            'units' => $this->units->map(function ($itemUnit) {
+            'units' => $this->units->map(function ($itemUnit) use ($minMargin) {
+                $cost = (float) $itemUnit->cost;
+                $minAllowedPrice = round($cost * (1 + ($minMargin / 100)), 2);
+
                 return [
                     'id'                => $itemUnit->id,
                     'unit_id'           => $itemUnit->unit_id,
                     'unit_name'         => $itemUnit->unit?->name,
                     'conversion_factor' => (float) $itemUnit->conversion_factor,
-                    'cost'              => (float) $itemUnit->cost,
+                    'cost'              => $cost,
                     'foreign_cost'      => $itemUnit->foreign_cost !== null ? (float) $itemUnit->foreign_cost : null,
                     'price'             => (float) $itemUnit->price,
+                    'min_allowed_price' => $minAllowedPrice,
 
                     // الباركودات اللانهائية التابعة لهذه الوحدة بالتحديد
                     'barcodes' => $itemUnit->barcodes->pluck('barcode'),
