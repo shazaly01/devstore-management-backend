@@ -1,0 +1,1 @@
+const m="جنيه";function o(t){if(t==null||t==="")return"N/A";const i=Number(t);if(isNaN(i))return`0 ${m}`;const n={style:"decimal",maximumFractionDigits:2,minimumFractionDigits:2};return i%1===0&&(n.maximumFractionDigits=0,n.minimumFractionDigits=0),`${new Intl.NumberFormat("en-US",n).format(i)} ${m}`}export{m as D,o as f};

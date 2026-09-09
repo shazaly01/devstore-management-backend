@@ -21,10 +21,14 @@ class DatabaseSeeder extends Seeder
             // 3. زرع حسابات المستخدمين وربطهم بالأدوار والصلاحيات
             UserSeeder::class,
 
+            // 4. زرع العملات وأسعار الصرف المعتمدة
             CurrencySeeder::class,
 
+            // 5. زرع قوائم فئات الأسعار
             PriceListSeeder::class,
 
+            // 6. زرع البيانات التجريبية الشاملة (الأصناف، الوحدات، المخازن، الأرصدة الافتتاحية، والقيد المتوازن)
+            DemoDataSeeder::class,
         ]);
     }
 }
