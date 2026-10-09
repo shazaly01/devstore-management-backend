@@ -3,32 +3,15 @@
 namespace App\Services\WhatsApp\Handlers;
 
 use App\Services\WhatsApp\Contracts\QueryHandlerInterface;
+use App\Services\WhatsApp\Traits\HandlesBranchConnections;
 use App\Models\Item;
-use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class LowStockQueryHandler implements QueryHandlerInterface
 {
-    /**
-     * ربط مفاتيح الفروع بأسماء اتصالات قاعدة البيانات
-     */
-    protected array $branchConnections = [
-        'omd'    => 'branch_main',
-        'madani' => 'branch_1',
-        'port1'  => 'branch_2',
-        'port2'  => 'branch_3',
-    ];
-
-    /**
-     * الأسماء المترجمة للفروع للعرض على الواتساب
-     */
-    protected array $branchLabels = [
-        'omd'    => 'أمدرمان',
-        'madani' => 'مدني',
-        'port1'  => 'بورتسودان 1',
-        'port2'  => 'بورتسودان 2',
-    ];
+    use HandlesBranchConnections;
 
     public function getIntentName(): string
     {
@@ -43,47 +26,66 @@ class LowStockQueryHandler implements QueryHandlerInterface
     public function handle(array $parsedIntent): string
     {
         $targetBranch = $parsedIntent['branch'] ?? 'all';
+        $availableBranchConnections = $this->getAvailableBranchConnections();
 
-        $connectionsToQuery = [];
-        if ($targetBranch === 'all' || !isset($this->branchConnections[$targetBranch])) {
-            $connectionsToQuery = $this->branchConnections;
-        } else {
-            $connectionsToQuery[$targetBranch] = $this->branchConnections[$targetBranch];
+        if (empty($availableBranchConnections)) {
+            return $this->handleSingleConnection();
         }
 
+        return $this->handleMultiBranchConnections($targetBranch, $availableBranchConnections);
+    }
+
+    /**
+     * معالجة الاستعلام في نمط قاعدة البيانات الواحدة
+     */
+    protected function handleSingleConnection(): string
+    {
+        try {
+            $items = $this->fetchLowStockQuery(null);
+
+            if ($items->isEmpty()) {
+                return "✅ *ممتاز!* لا توجد أي أصناف أو خامات وصلت للحد الأدنى للمخزون حالياً.";
+            }
+
+            $lowStockItems = [];
+            foreach ($items as $item) {
+                $lowStockItems[] = [
+                    'name'          => $item->name,
+                    'qty'           => (float) $item->total_qty,
+                    'reorder_level' => (float) $item->total_reorder_level,
+                    'unit'          => $item->baseUnit->name ?? 'وحدة',
+                    'branch'        => 'المركز الرئيسي',
+                ];
+            }
+
+            return $this->formatWhatsAppOutput($lowStockItems, 'all');
+
+        } catch (Throwable $e) {
+            Log::error("LowStockQueryHandler SingleConnection Error: " . $e->getMessage());
+
+            return "⚠️ تعذر استخراج تقرير النواقص حالياً، يرجى المحاولة لاحقاً.";
+        }
+    }
+
+    /**
+     * معالجة الاستعلام لنمط الفروع المتعددة
+     */
+    protected function handleMultiBranchConnections(string $targetBranch, array $availableBranchConnections): string
+    {
+        $connectionsToQuery = $this->resolveConnectionsToQuery($targetBranch, $availableBranchConnections);
         $lowStockItems = [];
 
         foreach ($connectionsToQuery as $branchKey => $connectionName) {
-            if (!Config::get("database.connections.{$connectionName}")) {
-                continue;
-            }
-
             try {
-                // جلب الأصناف مع وحدتها الأساسية وأرصدة المخازن
-                $items = Item::on($connectionName)
-                    ->with(['baseUnit', 'stocks'])
-                    ->where('item_type', 'product') // استبعاد الخدمات (لا تجرد)
-                    ->whereNull('deleted_at')
-                    ->get()
-                    ->filter(function ($item) {
-                        $currentQty = (float) $item->stocks->sum('current_quantity');
-                        // جمع حد الطلب من المخازن المرتبطة بالفرع
-                        $reorderLevel = (float) $item->stocks->sum('reorder_level');
-
-                        return $reorderLevel > 0 ? $currentQty <= $reorderLevel : $currentQty <= 5;
-                    });
+                $items = $this->fetchLowStockQuery($connectionName);
 
                 foreach ($items as $item) {
-                    $currentQty = (float) $item->stocks->sum('current_quantity');
-                    $reorderLevel = (float) $item->stocks->sum('reorder_level');
-                    $mainUnit = $item->baseUnit->name ?? 'وحدة';
-
                     $lowStockItems[] = [
                         'name'          => $item->name,
-                        'qty'           => $currentQty,
-                        'reorder_level' => $reorderLevel,
-                        'unit'          => $mainUnit,
-                        'branch'        => $this->branchLabels[$branchKey] ?? $branchKey,
+                        'qty'           => (float) $item->total_qty,
+                        'reorder_level' => (float) $item->total_reorder_level,
+                        'unit'          => $item->baseUnit->name ?? 'وحدة',
+                        'branch'        => $this->getBranchLabel($branchKey),
                     ];
                 }
             } catch (Throwable $e) {
@@ -95,13 +97,41 @@ class LowStockQueryHandler implements QueryHandlerInterface
             return "✅ *ممتاز!* لا توجد أي أصناف أو خامات وصلت للحد الأدنى للمخزون حالياً.";
         }
 
-        // الفرز تصاعدياً لتصدر الأصناف الأقل رصيداً القائمة
         usort($lowStockItems, fn($a, $b) => $a['qty'] <=> $b['qty']);
         $top10LowStock = array_slice($lowStockItems, 0, 10);
 
         return $this->formatWhatsAppOutput($top10LowStock, $targetBranch);
     }
 
+    /**
+     * استعلام مباشر عالي الكفاءة لقاعدة البيانات بدلاً من الفلترة البرمجية بالذاكرة
+     */
+    protected function fetchLowStockQuery(?string $connection)
+    {
+        $query = !empty($connection) ? Item::on($connection) : Item::query();
+
+        return $query->leftJoin('item_stocks', 'items.id', '=', 'item_stocks.item_id')
+            ->where('items.item_type', 'product')
+            ->where('items.is_active', true)
+            ->whereNull('items.deleted_at')
+            ->groupBy('items.id', 'items.name', 'items.base_unit_id')
+            ->select(
+                'items.id',
+                'items.name',
+                'items.base_unit_id',
+                DB::raw('COALESCE(SUM(item_stocks.current_quantity), 0) as total_qty'),
+                DB::raw('COALESCE(SUM(item_stocks.reorder_level), 0) as total_reorder_level')
+            )
+            ->havingRaw('total_qty <= CASE WHEN total_reorder_level > 0 THEN total_reorder_level ELSE 5 END')
+            ->orderBy('total_qty', 'asc')
+            ->take(10)
+            ->with('baseUnit')
+            ->get();
+    }
+
+    /**
+     * تنسيق تقرير النواقص النهائي
+     */
     protected function formatWhatsAppOutput(array $items, string $targetBranch): string
     {
         $branchTitle = ($targetBranch !== 'all' && isset($this->branchLabels[$targetBranch]))

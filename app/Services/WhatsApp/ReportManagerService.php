@@ -15,10 +15,13 @@ class ReportManagerService
     }
 
     /**
-     * معالجة النية وإصدار الرد
+     * معالجة النية وإصدار الرد مع الحماية الكاملة من قيم null
      */
-    public function generateReport(array $parsedIntent): string
+    public function generateReport(?array $parsedIntent): string
     {
-        return $this->registry->handle($parsedIntent);
+        // في حال فشل الذكاء الاصطناعي أو إرجاع null، توجيه الطلب تلقائياً لنية unknown لعرض دليل المساعدة
+        $safeIntent = $parsedIntent ?? ['intent' => 'unknown'];
+
+        return $this->registry->handle($safeIntent);
     }
 }

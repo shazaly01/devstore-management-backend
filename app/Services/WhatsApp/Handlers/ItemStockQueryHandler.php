@@ -3,33 +3,15 @@
 namespace App\Services\WhatsApp\Handlers;
 
 use App\Services\WhatsApp\Contracts\QueryHandlerInterface;
+use App\Services\WhatsApp\Traits\HandlesBranchConnections;
 use App\Models\Item;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Collection;
 use Throwable;
 
 class ItemStockQueryHandler implements QueryHandlerInterface
 {
-    /**
-     * ربط مفاتيح الفروع بأسماء اتصالات قاعدة البيانات (في حال وجود قواعد بيانات منفصلة لكل فرع)
-     */
-    protected array $branchConnections = [
-        'omd'    => 'branch_main',
-        'madani' => 'branch_1',
-        'port1'  => 'branch_2',
-        'port2'  => 'branch_3',
-    ];
-
-    /**
-     * الأسماء المترجمة للفروع للعرض على الواتساب
-     */
-    protected array $branchLabels = [
-        'omd'    => 'المركز الرئيسي (أمدرمان)',
-        'madani' => 'فرع مدني',
-        'port1'  => 'فرع بورتسودان 1',
-        'port2'  => 'فرع بورتسودان 2',
-    ];
+    use HandlesBranchConnections;
 
     public function getIntentName(): string
     {
@@ -38,7 +20,7 @@ class ItemStockQueryHandler implements QueryHandlerInterface
 
     public function getDescription(): string
     {
-        return 'استعلام عن رصيد الكميات المتوفرة من صنف معين أو عدة أصناف (مثل: رصيد بنر 130، جرد ورق 70 جرام، رول اب مدني)';
+        return 'استعلام عن رصيد الكميات المتوفرة وأسعار البيع لصنف معين أو عدة أصناف (مثل: رصيد بنر 130، جرد ورق 70 جرام، سعر ورصيد رول اب).';
     }
 
     public function handle(array $parsedIntent): string
@@ -50,7 +32,6 @@ class ItemStockQueryHandler implements QueryHandlerInterface
             return "⚠️ يرجى تحديد اسم الصنف أو الباركود للاستعلام عن المخزون.";
         }
 
-        // فحص ما إذا كان النظام يعمل باتصالات فروع متعددة أو اتصال افتراضي واحد
         $availableBranchConnections =$this->getAvailableBranchConnections();
 
         if (empty($availableBranchConnections)) {
@@ -61,27 +42,11 @@ class ItemStockQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * التحقق من اتصالات الفروع المعرفة في config/database.php
-     */
-    protected function getAvailableBranchConnections(): array
-    {
-        $available = [];
-
-        foreach ($this->branchConnections as $key =>$connectionName) {
-            if (Config::has("database.connections.{$connectionName}")) {
-                $available[$key] =$connectionName;
-            }
-        }
-
-        return $available;
-    }
-
-    /**
-     * معالجة الاستعلام للعميل الذي يملك قاعدة بيانات واحدة افتراضية (Single Database Mode)
+     * معالجة الاستعلام لنمط قاعدة البيانات الواحدة
      */
     protected function handleSingleConnection(string $search, array$parsedIntent): string
     {
-        $normalizedSearch = $this->normalizeArabic($search);
+        $normalizedSearch =$this->normalizeArabic($search);$currency = config('app.currency', 'SDG');
 
         try {
             $branchResults =$this->searchInBranch(null, $search,$normalizedSearch);
@@ -95,11 +60,14 @@ class ItemStockQueryHandler implements QueryHandlerInterface
                      . "• `رصيد بنر 130` - `مبيعات اليوم`";
             }
 
-            $output = "📦 *تقرير توفر المخزون*: _{$search}_\n";
+            $output = "📦 *تقرير توفر المخزون والأسعار*: _{$search}_\n";
             $output .= "-----------------------------------\n";
 
             foreach ($branchResults['items'] as$item) {
                 $output .= "🔹 *{$item['name']}*\n";
+                if ($item['price'] !== null and$item['price'] > 0) {
+                    $output .= "  ├ السعر: *" . number_format($item['price'], 0) . " {$currency}* ({$item['base_unit_name']})\n";
+                }
                 $output .= "  ├ إجمالي المخزون: *{$item['total_breakdown']}*\n";
 
                 if ($item['stores']->count() > 1) {
@@ -125,17 +93,11 @@ class ItemStockQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * معالجة الاستعلام للعملاء الذين يمتلكون قواعد بيانات مستقلة لكل فرع (Multi-Database Mode)
+     * معالجة الاستعلام لنمط الفروع المتعددة
      */
     protected function handleMultiBranchConnections(string $search, string $targetBranch, array$availableBranchConnections): string
     {
-        $connectionsToQuery = [];
-        if ($targetBranch === 'all' or !isset($availableBranchConnections[$targetBranch])) {
-            $connectionsToQuery =$availableBranchConnections;
-        } else {
-            $connectionsToQuery[$targetBranch] = $availableBranchConnections[$targetBranch];
-        }
-
+        $connectionsToQuery =$this->resolveConnectionsToQuery($targetBranch,$availableBranchConnections);
         $normalizedSearch =$this->normalizeArabic($search);$results = collect();
 
         foreach ($connectionsToQuery as $branchKey =>$connectionName) {
@@ -166,7 +128,7 @@ class ItemStockQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * البحث عن الأصناف ورصيدها في فرع محدد (أو الاتصال الافتراضي) مع الترتيب بحسب المطابقة والحد الأقصى
+     * البحث عن الأصناف ورصيدها مع حل تسعير الوحدة الأساسية
      */
     protected function searchInBranch(?string $connection, string $rawSearch, string$normalizedSearch): array
     {
@@ -178,10 +140,10 @@ class ItemStockQueryHandler implements QueryHandlerInterface
             'baseUnit',
             'units.unit',
             'stocks.store',
+            'prices',
         ])
         ->where(function ($q) use ($rawSearch,$normalizedSearch) {
             $q->where('name', 'like', "\%{$rawSearch}%")
-              ->orWhere('aliases', 'like', "%{$rawSearch}%")
               ->orWhereRaw("
                     LOWER(
                         REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name, 'أ', 'ا'), 'إ', 'ا'), 'آ', 'ا'), 'ى', 'ي'), 'ة', 'ه')
@@ -212,11 +174,13 @@ class ItemStockQueryHandler implements QueryHandlerInterface
                 ];
             });
 
-            $totalBaseQty =$storesStock->sum('base_qty');
+            $totalBaseQty = $storesStock->sum('base_qty');$price = $this->resolveItemBasePrice($item);
 
             return [
                 'id'              => $item->id,
                 'name'            => $item->name,
+                'price'           => $price,
+                'base_unit_name'  => $baseUnitName,
                 'total_breakdown' => $this->calculateUnitBreakdown($item,$totalBaseQty),
                 'stores'          => $storesStock,
             ];
@@ -230,7 +194,52 @@ class ItemStockQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * تفكيك الكميات بناءً على مصفوفة الوحدات التابعة للصنف
+     * استخراج سعر بيع الوحدة الأساسية للصنف بدقة لمنع العشوائية
+     */
+    protected function resolveItemBasePrice(Item $item): ?float
+    {
+        if (!$item->prices or$item->prices->isEmpty()) {
+            return null;
+        }
+
+        $baseUnitId =$item->base_unit_id;
+
+        // 1. البحث عن سعر يطابق الوحدة الأساسية مباشرة
+        $basePriceRecord =$item->prices->first(function ($p) use ($baseUnitId) {
+            return (isset($p->unit_id) and (int)$p->unit_id === (int)$baseUnitId)
+                or (isset($p->item_unit_id) and (int)$p->item_unit_id === (int)$baseUnitId);
+        });
+
+        // 2. إذا لم يتطابق، البحث عبر مصفوفة وحدات الصنف عن الوحدة ذات معامل التحويل 1
+        if (!$basePriceRecord and $item->units and$item->units->isNotEmpty()) {
+            $baseItemUnit =$item->units->first(function ($u) use ($baseUnitId) {
+                return (isset($u->unit_id) and (int)$u->unit_id === (int)$baseUnitId)
+                    or (isset($u->conversion_factor) and (float)$u->conversion_factor == 1.0);
+            });
+
+            if ($baseItemUnit) {
+                $basePriceRecord =$item->prices->first(function ($p) use ($baseItemUnit) {
+                    return isset($p->item_unit_id) and (int)$p->item_unit_id === (int)$baseItemUnit->id;
+                });
+            }
+        }
+
+        // 3. في حال عدم وجود تخصيص، نأخذ أول سعر بيع موجب مسجل
+        if (!$basePriceRecord) {
+            $basePriceRecord =$item->prices->first(function ($p) {$val = (float) ($p->price ?? $p->selling_price ?? 0);
+                return $val > 0;
+            });
+        }
+
+        if ($basePriceRecord) {$val = (float) ($basePriceRecord->price ?? $basePriceRecord->selling_price ?? 0);
+            return $val > 0 ?$val : null;
+        }
+
+        return null;
+    }
+
+    /**
+     * تفكيك الكميات بناءً على مصفوفة الوحدات
      */
     protected function calculateUnitBreakdown(Item $item, float$baseQty): string
     {
@@ -270,21 +279,24 @@ class ItemStockQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * تنسيق التقرير النهائي لشاشة الواتساب
+     * تنسيق تقرير المخزون النهائي لرسائل الواتساب
      */
     protected function formatWhatsAppReport(string $search, Collection $results, string$targetBranch): string
     {
-        $output = "📦 *تقرير توفر المخزون*: _{$search}_\n";
+        $currency = config('app.currency', 'SDG');
+        $output = "📦 *تقرير توفر المخزون والأسعار*: _{$search}_\n";
         $output .= "-----------------------------------\n";
 
         $totalMoreItems = 0;
 
-        foreach ($results as $branchKey =>$branchData) {
-            $label =$this->branchLabels[$branchKey] ?? "فرع ({$branchKey})";
+        foreach ($results as$branchKey => $branchData) {$label = $this->getBranchLabel($branchKey);
             $output .= "🏢 *الفرع*: {$label}\n";
 
             foreach ($branchData['items'] as$item) {
                 $output .= "🔹 *{$item['name']}*\n";
+                if ($item['price'] !== null and$item['price'] > 0) {
+                    $output .= "  ├ السعر: *" . number_format($item['price'], 0) . " {$currency}* ({$item['base_unit_name']})\n";
+                }
                 $output .= "  ├ إجمالي المخزون: *{$item['total_breakdown']}*\n";
 
                 if ($item['stores']->count() > 1) {
@@ -308,7 +320,7 @@ class ItemStockQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * تطبيع النصوص العربية
+     * تطبيع وتجريد النصوص العربية لتسهيل المطابقة
      */
     protected function normalizeArabic(string $text): string
     {

@@ -10,7 +10,10 @@ use App\Services\WhatsApp\Handlers\ItemStockQueryHandler;
 use App\Services\WhatsApp\Handlers\LatestInvoiceQueryHandler;
 use App\Services\WhatsApp\Handlers\TopDebtorsQueryHandler;
 use App\Services\WhatsApp\Handlers\LowStockQueryHandler;
-use App\Services\WhatsApp\Handlers\MaterialConsumptionQueryHandler;
+use App\Services\WhatsApp\Handlers\LiquidityQueryHandler;
+use App\Services\WhatsApp\Handlers\TopCreditorsQueryHandler;
+use App\Services\WhatsApp\Handlers\ExpensesQueryHandler;
+use App\Services\WhatsApp\Handlers\HelpQueryHandler;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -26,7 +29,10 @@ class AppServiceProvider extends ServiceProvider
         LatestInvoiceQueryHandler::class,
         TopDebtorsQueryHandler::class,
         LowStockQueryHandler::class,
-        MaterialConsumptionQueryHandler::class,
+        LiquidityQueryHandler::class,
+        TopCreditorsQueryHandler::class,
+        ExpensesQueryHandler::class,
+        HelpQueryHandler::class,
     ];
 
     /**

@@ -3,32 +3,14 @@
 namespace App\Services\WhatsApp\Handlers;
 
 use App\Services\WhatsApp\Contracts\QueryHandlerInterface;
+use App\Services\WhatsApp\Traits\HandlesBranchConnections;
 use App\Models\Customer;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class TopDebtorsQueryHandler implements QueryHandlerInterface
 {
-    /**
-     * ربط مفاتيح الفروع بأسماء اتصالات قاعدة البيانات (في حال وجود قواعد بيانات منفصلة لكل فرع)
-     */
-    protected array $branchConnections = [
-        'omd'    => 'branch_main',
-        'madani' => 'branch_1',
-        'port1'  => 'branch_2',
-        'port2'  => 'branch_3',
-    ];
-
-    /**
-     * الأسماء المترجمة للفروع للعرض على الواتساب
-     */
-    protected array $branchLabels = [
-        'omd'    => 'أمدرمان',
-        'madani' => 'مدني',
-        'port1'  => 'بورتسودان 1',
-        'port2'  => 'بورتسودان 2',
-    ];
+    use HandlesBranchConnections;
 
     public function getIntentName(): string
     {
@@ -37,14 +19,12 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
 
     public function getDescription(): string
     {
-        return 'عرض أعلى 10 عملاء مدينين بأعلى الأرصدة والمديونيات المستحقة للشركة عبر الفروع.';
+        return 'عرض أعلى 10 عملاء مدينين بأعلى المديونيات والمبالغ المستحقة للشركة عبر الفروع.';
     }
 
     public function handle(array $parsedIntent): string
     {
         $targetBranch = $parsedIntent['branch'] ?? 'all';
-
-        // فحص ما إذا كان النظام يعمل باتصالات فروع متعددة أو اتصال افتراضي واحد
         $availableBranchConnections = $this->getAvailableBranchConnections();
 
         if (empty($availableBranchConnections)) {
@@ -55,23 +35,7 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * التحقق من اتصالات الفروع المعرفة في config/database.php
-     */
-    protected function getAvailableBranchConnections(): array
-    {
-        $available = [];
-
-        foreach ($this->branchConnections as $key => $connectionName) {
-            if (Config::has("database.connections.{$connectionName}")) {
-                $available[$key] = $connectionName;
-            }
-        }
-
-        return $available;
-    }
-
-    /**
-     * معالجة الاستعلام للعميل الذي يملك قاعدة بيانات واحدة افتراضية (Single Database Mode)
+     * معالجة الاستعلام لنمط قاعدة البيانات الواحدة
      */
     protected function handleSingleConnection(): string
     {
@@ -85,20 +49,22 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
                 ->get();
 
             if ($customers->isEmpty()) {
-                return "✅ *ممتاز!* لا يوجد أي عملاء مدينين بمديونيات مسجلة حالياً.";
+                return "✅ *ممتاز!* لا توجد أي مديونيات متأخرة على العملاء حالياً.";
             }
 
-            $output = "🚨 *قائمة أعلى 10 عملاء مدينين*\n";
+            $output = "📋 *قائمة أعلى 10 عملاء مدينين (الديون المستحقة)*\n";
+            $output .= "🏢 *الفرع*: المركز الرئيسي\n";
             $output .= "-----------------------------------\n";
 
             $totalDebt = 0.0;
             foreach ($customers as $index => $customer) {
                 $rank = $index + 1;
                 $name = $customer->name;
+                $phone = $customer->phone ? " ({$customer->phone})" : "";
                 $balance = (float) $customer->current_balance;
                 $totalDebt += $balance;
 
-                $output .= "{$rank}️⃣ *{$name}*\n";
+                $output .= "{$rank}️⃣ *{$name}*{$phone}\n";
                 $output .= "   └ المديونية: *" . number_format($balance, 0) . " {$currency}*\n\n";
             }
 
@@ -110,24 +76,17 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
         } catch (Throwable $e) {
             Log::error("TopDebtorsQueryHandler SingleConnection Error: " . $e->getMessage());
 
-            return "⚠️ تعذر استخراج قائمة العملاء المدينين حالياً، يرجى المحاولة لاحقاً.";
+            return "⚠️ تعذر استخراج قائمة مديونيات العملاء حالياً، يرجى المحاولة لاحقاً.";
         }
     }
 
     /**
-     * معالجة الاستعلام للعملاء الذين يمتلكون قواعد بيانات مستقلة لكل فرع (Multi-Database Mode)
+     * معالجة الاستعلام لنمط الفروع المتعددة
      */
     protected function handleMultiBranchConnections(string $targetBranch, array $availableBranchConnections): string
     {
         $currency = config('app.currency', 'SDG');
-
-        $connectionsToQuery = [];
-        if ($targetBranch === 'all' || !isset($availableBranchConnections[$targetBranch])) {
-            $connectionsToQuery = $availableBranchConnections;
-        } else {
-            $connectionsToQuery[$targetBranch] = $availableBranchConnections[$targetBranch];
-        }
-
+        $connectionsToQuery = $this->resolveConnectionsToQuery($targetBranch, $availableBranchConnections);
         $debtorsList = [];
 
         foreach ($connectionsToQuery as $branchKey => $connectionName) {
@@ -139,19 +98,20 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
                     ->take(10)
                     ->get();
 
+                $branchLabel = $this->getBranchLabel($branchKey);
+
                 foreach ($customers as $customer) {
-                    $key = $customer->phone ?: $customer->name;
-                    $branchLabel = $this->branchLabels[$branchKey] ?? "فرع ({$branchKey})";
+                    $key = $customer->phone ? $customer->phone : $customer->name;
 
                     if (!isset($debtorsList[$key])) {
                         $debtorsList[$key] = [
                             'name'    => $customer->name,
-                            'phone'   => $customer->phone ?? 'غير مسجل',
+                            'phone'   => $customer->phone ? $customer->phone : 'غير مسجل',
                             'balance' => (float) $customer->current_balance,
                             'branch'  => $branchLabel,
                         ];
                     } else {
-                        // تجميع الأرصدة في حال وجود العميل في أكثر من فرع
+                        // تجميع الأرصدة في حال تكرار العميل عبر الفروع
                         $debtorsList[$key]['balance'] += (float) $customer->current_balance;
                     }
                 }
@@ -161,10 +121,10 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
         }
 
         if (empty($debtorsList)) {
-            return "✅ *ممتاز!* لا يوجد أي عملاء مدينين بمديونيات مسجلة حالياً.";
+            return "✅ *ممتاز!* لا توجد أي مديونيات متأخرة على العملاء حالياً.";
         }
 
-        // فرز القائمة المجمعة تنازلياً وأخذ أعلى 10 فقط
+        // الترتيب تنازلياً وأخذ أعلى 10 عملاء
         usort($debtorsList, fn($a, $b) => $b['balance'] <=> $a['balance']);
         $top10 = array_slice($debtorsList, 0, 10);
 
@@ -176,21 +136,22 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
      */
     protected function formatMultiBranchWhatsAppOutput(array $debtors, string $targetBranch, string $currency): string
     {
-        $branchTitle = ($targetBranch !== 'all' && isset($this->branchLabels[$targetBranch]))
+        $branchTitle = ($targetBranch !== 'all' and isset($this->branchLabels[$targetBranch]))
             ? "({$this->branchLabels[$targetBranch]})"
-            : "(جميع الفروع)";
+            : "(كافة الفروع)";
 
-        $output = "🚨 *قائمة أعلى 10 عملاء مدينين {$branchTitle}*\n";
+        $output = "📋 *قائمة أعلى 10 عملاء مدينين {$branchTitle}*\n";
         $output .= "-----------------------------------\n";
 
         $totalDebt = 0.0;
         foreach ($debtors as $index => $debtor) {
             $rank = $index + 1;
             $name = $debtor['name'];
+            $phone = ($debtor['phone'] !== 'غير مسجل') ? " ({$debtor['phone']})" : "";
             $balance = number_format($debtor['balance'], 0);
             $totalDebt += $debtor['balance'];
 
-            $output .= "{$rank}️⃣ *{$name}*\n";
+            $output .= "{$rank}️⃣ *{$name}*{$phone}\n";
             $output .= "   ├ المديونية: *{$balance} {$currency}*\n";
             $output .= "   └ الفرع: {$debtor['branch']}\n\n";
         }

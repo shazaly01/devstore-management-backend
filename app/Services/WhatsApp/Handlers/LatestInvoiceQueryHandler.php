@@ -3,51 +3,25 @@
 namespace App\Services\WhatsApp\Handlers;
 
 use App\Services\WhatsApp\Contracts\QueryHandlerInterface;
+use App\Services\WhatsApp\Traits\HandlesBranchConnections;
 use App\Models\Sale;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
 use Throwable;
 
 class LatestInvoiceQueryHandler implements QueryHandlerInterface
 {
-    /**
-     * ربط مفاتيح الفروع بأسماء اتصالات قاعدة البيانات
-     */
-    protected array $branchConnections = [
-        'omd'    => 'branch_main',
-        'madani' => 'branch_1',
-        'port1'  => 'branch_2',
-        'port2'  => 'branch_3',
-    ];
+    use HandlesBranchConnections;
 
     /**
-     * الأسماء المترجمة للفروع للعرض على الواتساب
-     */
-    protected array $branchLabels = [
-        'omd'    => 'المركز الرئيسي (أمدرمان)',
-        'madani' => 'فرع مدني',
-        'port1'  => 'فرع بورتسودان 1',
-        'port2'  => 'فرع بورتسودان 2',
-    ];
-
-    /**
-     * تسميات طرق الدفع
+     * تسميات طرق الدفع التجارية
      */
     protected array $paymentTypeLabels = [
-        'cash'   => 'نقدي 💵',
-        'card'   => 'شبكة / بنكك 💳',
-        'credit' => 'آجل / ذمم 📝',
-    ];
-
-    /**
-     * تسميات حالات الورشة والإنتاج
-     */
-    protected array $productionStatusLabels = [
-        Sale::STATUS_PENDING    => 'قيد الانتظار ⏳',
-        Sale::STATUS_PROCESSING => 'جاري التشغيل ⚙️',
-        Sale::STATUS_ON_HOLD    => 'معلق 🛑',
-        Sale::STATUS_COMPLETED  => 'تم التنفيذ بالكامل ✅',
+        'cash'     => 'نقدي (كاش) 💵',
+        'card'     => 'شبكة / بنكك 💳',
+        'bank'     => 'تحويل بنكي 💳',
+        'transfer' => 'تحويل بنكي 💳',
+        'credit'   => 'آجل / ذمم 📝',
     ];
 
     public function getIntentName(): string
@@ -57,7 +31,7 @@ class LatestInvoiceQueryHandler implements QueryHandlerInterface
 
     public function getDescription(): string
     {
-        return 'استعلام عن تفاصيل آخر فاتورة مبيعات لعميل محدد شاملة المقاسات (الطول والعرض)، اسم المصمم، وحالة الإنتاج.';
+        return 'استعلام عن تفاصيل وأصناف وأسعار أحدث فاتورة مبيعات مسجلة لعميل محدد بالاسم أو الهاتف عبر الفروع.';
     }
 
     public function handle(array $parsedIntent): string
@@ -66,49 +40,56 @@ class LatestInvoiceQueryHandler implements QueryHandlerInterface
         $targetBranch = $parsedIntent['branch'] ?? 'all';
 
         if (empty($search)) {
-            return "⚠️ يرجى تحديد اسم العميل للاستعلام عن آخر فاتورة.";
+            return "⚠️ يرجى تحديد اسم العميل أو هاتفه للاستعلام عن آخر فاتورة (مثال: آخر فاتورة لعميل طارق).";
         }
 
-        $connectionsToQuery = [];
-        if ($targetBranch === 'all' || !isset($this->branchConnections[$targetBranch])) {
-            $connectionsToQuery = $this->branchConnections;
-        } else {
-            $connectionsToQuery[$targetBranch] = $this->branchConnections[$targetBranch];
+        $availableBranchConnections = $this->getAvailableBranchConnections();
+
+        if (empty($availableBranchConnections)) {
+            return $this->handleSingleConnection($search);
         }
 
-        $latestInvoice = null;
-        $foundBranchKey = null;
+        return $this->handleMultiBranchConnections($search, $targetBranch, $availableBranchConnections);
+    }
 
-        // البحث عن أحدث فاتورة للعميل في الفروع المطلوبة
-        foreach ($connectionsToQuery as $branchKey => $connectionName) {
-            if (!Config::get("database.connections.{$connectionName}")) {
-                continue;
+    /**
+     * معالجة الاستعلام لنمط قاعدة البيانات الواحدة
+     */
+    protected function handleSingleConnection(string $search): string
+    {
+        try {
+            $invoice = $this->findLatestInvoice(null, $search);
+
+            if (!$invoice) {
+                return "❌ *لم نجد أي فواتير مبيعات مسجلة للعميل*: \"{$search}\".";
             }
 
+            return $this->formatWhatsAppInvoice($invoice, 'المركز الرئيسي');
+
+        } catch (Throwable $e) {
+            Log::error("LatestInvoiceQueryHandler SingleConnection Error: " . $e->getMessage());
+
+            return "⚠️ تعذر استخراج تفاصيل الفاتورة حالياً، يرجى المحاولة لاحقاً.";
+        }
+    }
+
+    /**
+     * معالجة الاستعلام لنمط الفروع المتعددة
+     */
+    protected function handleMultiBranchConnections(string $search, string $targetBranch, array $availableBranchConnections): string
+    {
+        $connectionsToQuery = $this->resolveConnectionsToQuery($targetBranch, $availableBranchConnections);
+        $latestInvoice = null;
+        $foundBranchLabel = 'المركز الرئيسي';
+
+        foreach ($connectionsToQuery as $branchKey => $connectionName) {
             try {
-                $invoice = Sale::on($connectionName)
-                    ->with([
-                        'customer',
-                        'designer',
-                        'items.item',
-                        'items.itemUnit.unit',
-                    ])
-                    ->whereNull('deleted_at')
-                    ->where(function ($q) use ($search) {
-                        $q->where('customer_name_text', 'like', "%{$search}%")
-                          ->orWhereHas('customer', function ($cQ) use ($search) {
-                              $cQ->where('name', 'like', "%{$search}%")
-                                 ->orWhere('phone', 'like', "%{$search}%");
-                          });
-                    })
-                    ->orderBy('created_at', 'desc')
-                    ->first();
+                $invoice = $this->findLatestInvoice($connectionName, $search);
 
                 if ($invoice) {
-                    // مقارنة التواريخ لاختيار أحدث فاتورة في حال كان البحث في كافة الفروع
-                    if (!$latestInvoice || Carbon::parse($invoice->created_at)->gt(Carbon::parse($latestInvoice->created_at))) {
+                    if (!$latestInvoice or Carbon::parse($invoice->created_at)->gt(Carbon::parse($latestInvoice->created_at))) {
                         $latestInvoice = $invoice;
-                        $foundBranchKey = $branchKey;
+                        $foundBranchLabel = $this->getBranchLabel($branchKey);
                     }
                 }
             } catch (Throwable $e) {
@@ -117,72 +98,89 @@ class LatestInvoiceQueryHandler implements QueryHandlerInterface
         }
 
         if (!$latestInvoice) {
-            $branchNotice = ($targetBranch !== 'all' && isset($this->branchLabels[$targetBranch]))
+            $branchNotice = ($targetBranch !== 'all' and isset($this->branchLabels[$targetBranch]))
                 ? " في *{$this->branchLabels[$targetBranch]}*"
                 : "";
 
-            return "❌ *لم نجد أي فواتير مسجلة للعميل*: \"{$search}\"{$branchNotice}.";
+            return "❌ *لم نجد أي فواتير مبيعات مسجلة للعميل*: \"{$search}\"{$branchNotice}.";
         }
 
-        return $this->formatWhatsAppInvoice($latestInvoice, $foundBranchKey);
+        return $this->formatWhatsAppInvoice($latestInvoice, $foundBranchLabel);
     }
 
     /**
-     * تنسيق الفاتورة للعرض التفصيلي المخصص للدعاية والإعلان
+     * البحث عن أحدث فاتورة مبيعات غير محذوفة للعميل
      */
-    protected function formatWhatsAppInvoice(Sale $sale, string $branchKey): string
+    protected function findLatestInvoice(?string $connection, string $search): ?Sale
     {
-        $branchLabel = $this->branchLabels[$branchKey] ?? $branchKey;
+        $query = !empty($connection) ? Sale::on($connection) : Sale::query();
+
+        return $query->with([
+                'customer',
+                'items.item',
+                'items.itemUnit.unit',
+            ])
+            ->whereNull('deleted_at')
+            ->where(function ($q) use ($search) {
+                $q->where('customer_name_text', 'like', "%{$search}%")
+                  ->orWhereHas('customer', function ($cQ) use ($search) {
+                      $cQ->where('name', 'like', "%{$search}%")
+                         ->orWhere('phone', 'like', "%{$search}%");
+                  });
+            })
+            ->orderBy('created_at', 'desc')
+            ->first();
+    }
+
+    /**
+     * تنسيق الفاتورة للعرض المالي والتجاري النقي
+     */
+    protected function formatWhatsAppInvoice(Sale $sale, string $branchLabel): string
+    {
+        $currency = config('app.currency', 'SDG');
         $customerName = $sale->customer->name ?? $sale->customer_name_text ?? 'عميل نقدي';
-        $invoiceDate = $sale->invoice_date ? Carbon::parse($sale->invoice_date)->format('Y/m/d h:i A') : 'غير محدد';
+        $customerPhone = $sale->customer->phone ?? null;
+        $invoiceDate = $sale->invoice_date 
+            ? Carbon::parse($sale->invoice_date)->format('Y/m/d h:i A') 
+            : Carbon::parse($sale->created_at)->format('Y/m/d h:i A');
+
         $paymentLabel = $this->paymentTypeLabels[$sale->payment_type] ?? $sale->payment_type;
-        $statusLabel = $this->productionStatusLabels[$sale->production_status] ?? $sale->production_status;
 
         $output = "🧾 *تفاصيل آخر فاتورة مبيعات*\n";
-        $output .= "-----------------------------------\n";
         $output .= "🏢 *الفرع*: {$branchLabel}\n";
-        $output .= "📄 *رقم الفاتورة*: #{$sale->invoice_number}\n";
-        $output .= "👤 *العميل*: {$customerName}\n";
-        $output .= "📅 *التاريخ*: {$invoiceDate}\n";
-        $output .= "⚙️ *حالة الورشة*: *{$statusLabel}*\n";
-
-        if ($sale->designer) {
-            $output .= "🎨 *المصمم*: {$sale->designer->name}\n";
-        }
-
         $output .= "-----------------------------------\n";
-        $output .= "📦 *بيانات اللوحات والأصناف*:\n\n";
+        $output .= "📄 *رقم الفاتورة*: #{$sale->invoice_number}\n";
+        $output .= "👤 *العميل*: {$customerName}" . ($customerPhone ? " ({$customerPhone})" : "") . "\n";
+        $output .= "📅 *التاريخ*: {$invoiceDate}\n";
+        $output .= "💳 *طريقة الدفع*: {$paymentLabel}\n";
+        $output .= "-----------------------------------\n";
+        $output .= "📦 *بنود الأصناف والكميات:*\n\n";
 
         foreach ($sale->items as $index => $item) {
             $itemNum = $index + 1;
             $itemName = $item->item->name ?? 'صنف غير محدد';
             $unitName = $item->itemUnit?->unit?->name ?? 'وحدة';
             $qty = (float) $item->quantity;
-            $price = number_format((float) $item->unit_price, 0);
+            $unitPrice = number_format((float) $item->unit_price, 0);
             $total = number_format((float) $item->grand_total, 0);
 
             $output .= "*{$itemNum}️⃣ {$itemName}*\n";
-
-            // عرض المقاسات والأبعاد (طول × عرض) إذا كان الصنف مترياً
-            if ($item->length !== null && $item->width !== null && ((float)$item->length > 0 || (float)$item->width > 0)) {
-                $length = (float) $item->length;
-                $width = (float) $item->width;
-                $output .= "   📐 المقاس: *{$length} × {$width} متر*\n";
-            }
-
             $output .= "   ├ الكمية: {$qty} {$unitName}\n";
-            $output .= "   ├ السعر: {$price} SDG\n";
-            $output .= "   └ الإجمالي: *{$total} SDG*\n\n";
+            $output .= "   ├ السعر: {$unitPrice} {$currency}\n";
+            $output .= "   └ الإجمالي: *{$total} {$currency}*\n\n";
         }
 
         $output .= "-----------------------------------\n";
 
         if ((float) $sale->discount_amount > 0) {
-            $output .= "🏷️ *خصم*: " . number_format((float) $sale->discount_amount, 0) . " SDG\n";
+            $output .= "🏷️ *الخصم*: " . number_format((float) $sale->discount_amount, 0) . " {$currency}\n";
         }
 
-        $output .= "💵 *صافي الفاتورة*: *" . number_format((float) $sale->grand_total, 0) . " SDG*\n";
-        $output .= "💳 *طريقة الدفع*: {$paymentLabel}\n";
+        if ((float) $sale->tax_amount > 0) {
+            $output .= "🏛️ *الضريبة*: " . number_format((float) $sale->tax_amount, 0) . " {$currency}\n";
+        }
+
+        $output .= "💵 *صافي الفاتورة الإجمالي*: *" . number_format((float) $sale->grand_total, 0) . " {$currency}*\n";
 
         if (!empty($sale->notes)) {
             $output .= "📝 *ملاحظات*: _{$sale->notes}_\n";

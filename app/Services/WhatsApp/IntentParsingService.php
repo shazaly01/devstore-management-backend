@@ -9,6 +9,34 @@ use Throwable;
 class IntentParsingService
 {
     /**
+     * المسار السريع للأنماط المباشرة الشائعة (0 توكن)
+     */
+    protected array $quickPatterns = [
+        // 1. دليل الأوامر والمساعدة المباشرة
+        '/^(التعليمات|تعليمات|مساعدة|الاوامر|الأوامر|القائمة|منيو|دليل|اوامر|أوامر|help|menu|\?|؟)$/ui' => ['intent' => 'help_menu', 'branch' => 'all'],
+
+        // 2. المبيعات
+        '/^(مبيعات اليوم|دخل اليوم|مبيعات لليوم)$/u'           => ['intent' => 'sales_report', 'period' => 'today', 'branch' => 'all'],
+        '/^(مبيعات امس|مبيعات أمس|دخل امس)$/u'               => ['intent' => 'sales_report', 'period' => 'yesterday', 'branch' => 'all'],
+        '/^(مبيعات هذا الاسبوع|مبيعات الاسبوع)$/u'           => ['intent' => 'sales_report', 'period' => 'this_week', 'branch' => 'all'],
+        '/^(مبيعات الاسبوع الماضي|مبيعات الاسبوع الفات)$/u'  => ['intent' => 'sales_report', 'period' => 'last_week', 'branch' => 'all'],
+        '/^(مبيعات هذا الشهر|مبيعات الشهر)$/u'               => ['intent' => 'sales_report', 'period' => 'this_month', 'branch' => 'all'],
+        '/^(مبيعات الشهر الماضي|مبيعات الشهر الفات)$/u'      => ['intent' => 'sales_report', 'period' => 'last_month', 'branch' => 'all'],
+
+        // 3. السيولة والمصروفات
+        '/^(السيولة|موقف السيولة|الكاش|رصيد الخزائن|البنوك)$/u' => ['intent' => 'liquidity_summary', 'branch' => 'all'],
+        '/^(مصروفات اليوم|صرفيات اليوم)$/u'                   => ['intent' => 'expenses_summary', 'period' => 'today', 'branch' => 'all'],
+        '/^(مصروفات امس|مصروفات أمس|صرفيات امس)$/u'           => ['intent' => 'expenses_summary', 'period' => 'yesterday', 'branch' => 'all'],
+        '/^(مصروفات هذا الاسبوع|صرفيات هذا الاسبوع)$/u'       => ['intent' => 'expenses_summary', 'period' => 'this_week', 'branch' => 'all'],
+        '/^(مصروفات هذا الشهر|صرفيات هذا الشهر)$/u'           => ['intent' => 'expenses_summary', 'period' => 'this_month', 'branch' => 'all'],
+
+        // 4. المخزون والديون
+        '/^(النواقص|تقرير النواقص|الاصناف المنتهية)$/u'        => ['intent' => 'low_stock', 'branch' => 'all'],
+        '/^(كبار المدينين|اعلى المدينين|الديون)$/u'           => ['intent' => 'top_debtors', 'branch' => 'all'],
+        '/^(كبار الموردين|ديون الموردين|المستحقات)$/u'         => ['intent' => 'top_creditors', 'branch' => 'all'],
+    ];
+
+    /**
      * تحليل نية النص الوارد من الواتساب
      */
     public function parseIntent(string $userMessage, string $phoneNumber): ?array
@@ -19,11 +47,59 @@ class IntentParsingService
             return null;
         }
 
+        // 1. فحص المسار السريع للأوامر المباشرة والتعليمات (0 توكن)
+        $quickResult = $this->matchQuickPattern($cleanedMessage);
+        if ($quickResult !== null) {
+            return $quickResult;
+        }
+
+        // 2. فحص التحيات والمجاملات وتوجيهها فوراً لدليل المساعدة (0 توكن)
+        if ($this->isGreeting($cleanedMessage)) {
+            return [
+                'intent'     => 'help_menu',
+                'branch'     => 'all',
+                'period'     => null,
+                'date'       => null,
+                'item_name'  => null,
+                'party_name' => null,
+                'party_type' => 'all',
+            ];
+        }
+
+        // 3. الاستعانة بالذكاء الاصطناعي فقط للطلبات الديناميكية المتبقية
         return $this->executeAiInference($cleanedMessage);
     }
 
     /**
-     * الاتصال المباشر بـ DeepSeek API
+     * فحص ما إذا كانت الرسالة مجرد تحية عامة
+     */
+    protected function isGreeting(string $text): bool
+    {
+        return (bool) preg_match('/^(سلام|السلام عليكم|مرحبا|هلا|صباح الخير|مساء الخير|شكرا|تسلم|منو معاي|من انت)$/u', $text);
+    }
+
+    /**
+     * مطابقة النص بالمسار السريع
+     */
+    protected function matchQuickPattern(string $text): ?array
+    {
+        foreach ($this->quickPatterns as $pattern => $result) {
+            if (preg_match($pattern, $text)) {
+                return array_merge([
+                    'period'     => null,
+                    'date'       => null,
+                    'item_name'  => null,
+                    'party_name' => null,
+                    'party_type' => 'all',
+                ], $result);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * الاتصال بـ DeepSeek API مع استغلال الـ Prompt Caching
      */
     protected function executeAiInference(string $message): ?array
     {
@@ -34,20 +110,23 @@ class IntentParsingService
             ? $baseUrl
             : rtrim($baseUrl, '/') . '/chat/completions';
 
-        $systemPrompt = $this->buildSystemPrompt();
+        $today = now()->format('Y-m-d');
+        $dayName = now()->locale('ar')->isoFormat('dddd');
+
+        $userPayload = "[تاريخ اليوم: {$today} ({$dayName})]\nاستعلام: {$message}";
 
         try {
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
                 'Content-Type'  => 'application/json',
-            ])->timeout(15)->post($endpoint, [
+            ])->timeout(12)->post($endpoint, [
                 'model'           => 'deepseek-chat',
                 'messages'        => [
-                    ['role' => 'system', 'content' => $systemPrompt],
-                    ['role' => 'user', 'content' => $message],
+                    ['role' => 'system', 'content' => $this->getStaticSystemPrompt()],
+                    ['role' => 'user', 'content' => $userPayload],
                 ],
-                'temperature'     => 0.1,
-                'max_tokens'      => 200,
+                'temperature'     => 0.0,
+                'max_tokens'      => 150,
                 'response_format' => ['type' => 'json_object'],
             ]);
 
@@ -71,97 +150,45 @@ class IntentParsingService
     }
 
     /**
-     * بناء الـ System Prompt الديناميكي والنظيف
+     * موجه نظام ثابت ومكثف لدعم الـ Cache وتقليل التوكن
      */
-    protected function buildSystemPrompt(): string
+    protected function getStaticSystemPrompt(): string
     {
-        $today   = now()->format('Y-m-d');
-        $dayName = now()->locale('ar')->isoFormat('dddd');
-
-        $registry = app(QueryHandlerRegistry::class);
-        $handlers = $registry->getRegisteredHandlers();
-
-        // بناء توثيق النيات ديناميكياً من الـ Handlers المسجلة بدون تكرار
-        $intentsDocumentation = "";
-        foreach ($handlers as $handler) {
-            $description = method_exists($handler, 'getDescription')
-                ? $handler->getDescription()
-                : 'معالجة الاستعلام المخصص';
-            $intentsDocumentation .= "- \"{$handler->getIntentName()}\": {$description}\n";
-        }
-
-        // النية الافتراضية للطلبات غير المعروفة
-        $intentsDocumentation .= "- \"unknown\": إذا كان الطلب غير واضح أو غير مرتبط بنظام ERP.";
-
         return <<<PROMPT
-أنت محرك تحليل نيات (ERP Intent Parser). مهمتك إرجاع كائن JSON فقط يحتوي حتماً على المفاتيح التالية:
+Parse ERP queries into JSON only:
 {
-  "intent": "اسم النية",
-  "branch": "كود الفرع",
-  "period": "today أو this_week أو this_month أو null",
-  "date": "التاريخ المحدد أو null",
-  "item_name": "اسم الصنف أو null",
-  "party_name": "اسم العميل أو المورد أو null",
-  "party_type": "customer أو supplier أو all"
+  "intent": "sales_report|liquidity_summary|expenses_summary|top_creditors|top_debtors|party_balance|item_stock|low_stock|latest_invoice|help_menu|unknown",
+  "branch": "omd|madani|port1|port2|all",
+  "period": "today|yesterday|this_week|last_week|this_month|last_month|null",
+  "date": "YYYY-MM-DD|null",
+  "item_name": "clean string|null",
+  "party_name": "clean string|null",
+  "party_type": "customer|supplier|all"
 }
 
-السياق الزمني الحالي:
-- تاريخ اليوم: {$today}
-- اليوم هو: {$dayName}
+Branch aliases:
+- omd: المركز الرئيسي, امدرمان
+- madani: مدني, الجزيرة
+- port1: بورتسودان 1, المريخ, الميناء
+- port2: بورتسودان 2, السوق
+- all: default if branch not specified
 
-النيات المتاحة حالياً في النظام (Intents):
-{$intentsDocumentation}
-
-خريطة الفروع والأسماء المستعارة (Branch Mapping):
-- "omd": المركز الرئيسي, امدرمان, الفرع الرئيسي, ورشة امدرمان, omdurman
-- "madani": مدني, ود مدني, فرع الجزيرة, madani
-- "port1": بورتسودان 1, بورتسودان الرئيسي, فرع المريخ, المريخ, فرع الميناء, port1
-- "port2": بورتسودان 2, فرع السوق, السوق, بورتسودان الفرعي, port2
-- "all": الكل, جميع الفروع, كافة الفروع, الاجمالي, كل الفروع
-
-قواعد استخراج الفترة الزمنية (period):
-- "اليوم" / "اليوم الحالي" -> "today"
-- "هذا الأسبوع" / "الأسبوع الحالي" / "خلال الأسبوع" -> "this_week"
-- "هذا الشهر" / "الشهر الحالي" / "خلال الشهر" -> "this_month"
-- إذا لم يحدد المستخدم فترة صريحة في تقارير الاستهلاك، اجعل "period" مساوية لـ "this_month".
-
-قواعد استخراج وتحليل التواريخ (date format YYYY-MM-DD):
-1. التواريخ النسبية المباشرة:
-   - "اليوم" / "الليلة" / "الآن" -> {$today}
-   - "أمس" / "إمبارح" / "بارح" -> احسب تاريخ يوم أمس مقارنة بـ {$today}.
-   - "أول أمس" / "قبل أول إمبارح" -> احسب تاريخ قبل يومين مقارنة بـ {$today}.
-2. أيام الأسبوع النسبية (بناءً على أن اليوم هو {$dayName}):
-   - احسب تاريخ أقرب يوم مطالع سابق للمطلوب (مثلاً "الاثنين الماضي").
-3. التواريخ الصريحة:
-   - "15/5" أو "15-5" حوّلها إلى السنة الحالية "2026-05-15".
-4. في تقارير المخزون (item_stock)، تقرير النواقص (low_stock)، أرصدة الحسابات (party_balance)، وتفاصيل آخر فاتورة (latest_invoice)، اجعل قيمة date دائماً null إلا إذا حُدد تاريخ صريح.
-
-قواعد استخراج اسم الصنف (item_name) والتطبيع اللغوي:
-1. قم باستخراج الكلمات الأساسية فقط للصنف وتجريد النص تماماً من كلمات الزيادة مثل: (عايز، شوف لي، كم، رصيد، متوفر، عندكم، في، اسأل لي عن).
-2. إزالة كافة حركات التشكيل، وتوحيد الهمزات (أ، إ، آ -> ا)، والياء (ى -> ي)، والتاء المربوطة (ة -> ه).
-
-قواعد استخراج اسم العميل/المورد (party_name) وتحديد النوع (party_type):
-1. party_name: استخرج اسم الشخص أو الشركة مجرداً من كلمات الطلب (مثل: كشف حساب، رصيد، حساب، كم عليه، كم له، آخر فاتورة، أحدث فاتورة، تفاصيل فاتورة).
-2. party_type:
-   - إذا ذكر النص "عميل" أو كان الطلب يشير لمديونية بيع أو فاتورة مبيعات -> "customer".
-   - إذا ذكر النص "مورد" أو كان الطلب يشير لمستحقات توريد -> "supplier".
-   - إذا لم يتضح نوع الكيان بدقة -> "all".
-
-القيم الافتراضية:
-- period: "this_month" في تقارير استهلاك الخامات (material_consumption) كافتراضي، وإلا ضعه null.
-- date: استخدم "{$today}" فقط في تقارير المبيعات العامة (sales) إذا قصد المستخدم اليوم/الان، وإلا ضعه null.
-- branch: إذا لم يحدد المستخدم فرعاً، استخدم "all" في التقارير العامة، و "omd" كفرع افتراضي في تقرير استهلاك الخامات.
-- item_name: ضعه null إذا لم يكن الاستعلام عن صنف.
-- party_name: ضعه null إذا لم يكن الاستعلام عن عميل أو مورد.
-- party_type: ضعه "all" كافتراضي.
-
-تنبيه: ارجع كائن JSON فقط بدون أي مقدمات أو شرح.
+Rules:
+1. Strip query words (رصيد, سعر, حساب, كم, كشف, توفر) from item_name/party_name.
+2. In sales/expenses: set period (today, yesterday, this_week, last_week, this_month, last_month). If relative periodic, date=null.
+3. If explicit date given, parse to YYYY-MM-DD.
+4. Set party_type=supplier if context mentions purchase/supplier, customer for sales/client, else all.
+5. If user asks for instructions, commands or help, return intent=help_menu.
+6. Return JSON only. No explanations.
 PROMPT;
     }
 
+    /**
+     * تنظيف وضبط مدخلات الرسالة
+     */
     protected function sanitizeInput(string $text): string
     {
         $text = preg_replace('/\s+/u', ' ', $text);
-        return trim(mb_substr((string) $text, 0, 200));
+        return trim(mb_substr((string) $text, 0, 150));
     }
 }

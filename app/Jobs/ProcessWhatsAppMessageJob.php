@@ -18,21 +18,21 @@ class ProcessWhatsAppMessageJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     /**
-     * The number of times the job may be attempted.
+     * تحديد المحاولة بمرة واحدة فقط لمنع تكرار استهلاك التوكن ومنع إرسال رسائل مكررة للمدير
      *
      * @var int
      */
-    public $tries = 3;
+    public $tries = 1;
 
     /**
-     * The number of seconds the job can run before timing out.
+     * مهلة تنفيذ الوظيفة بالثواني
      *
      * @var int
      */
-    public $timeout = 60;
+    public $timeout = 40;
 
     /**
-     * Create a new job instance.
+     * إنشاء كائن المهمة
      *
      * @param string $senderPhone
      * @param string $messageText
@@ -45,7 +45,7 @@ class ProcessWhatsAppMessageJob implements ShouldQueue
     ) {}
 
     /**
-     * Execute the job.
+     * تنفيذ معالجة الرسالة والاستعلام
      *
      * @param IntentParsingService $intentParser
      * @param ReportManagerService $reportManager
@@ -58,17 +58,23 @@ class ProcessWhatsAppMessageJob implements ShouldQueue
         WhatsAppResponseService $whatsappResponse
     ): void {
         try {
-            // 1. تحليل النية واستخراج المقاصد عبر DeepSeek
+            // 1. تحليل النية واستخراج المقاصد (عبر المسار السريع بـ 0 توكن أو DeepSeek)
             $parsedIntent = $intentParser->parseIntent($this->messageText, $this->senderPhone);
 
-            // 2. استعلام قاعدة البيانات وتوليد التقرير المطلوب
+            // 2. ضمان وجود مصفوفة نية صالحة وتمرير سياق رقم المرسل إليها
+            if (!$parsedIntent) {
+                $parsedIntent = ['intent' => 'unknown'];
+            }
+            $parsedIntent['sender_phone'] = $this->senderPhone;
+
+            // 3. استعلام قاعدة البيانات وتوليد التقرير المطلوب عبر المعالج المسجل
             $reportResult = $reportManager->generateReport($parsedIntent);
 
-            // 3. إرسال التقرير النهائي إلى المدير عبر الواتساب
+            // 4. إرسال التقرير النهائي إلى هاتف المدير عبر الواتساب
             $whatsappResponse->sendTextMessage($this->senderPhone, $reportResult);
 
         } catch (Throwable $e) {
-            Log::error('ProcessWhatsAppMessageJob Failed', [
+            Log::error('❌ [WA-Queue] فشل معالجة رسالة الواتساب', [
                 'message_id'   => $this->messageId,
                 'sender_phone' => $this->senderPhone,
                 'message_text' => $this->messageText,
@@ -76,10 +82,10 @@ class ProcessWhatsAppMessageJob implements ShouldQueue
                 'trace'        => $e->getTraceAsString(),
             ]);
 
-            // إرسال رسالة تنبيهية آمنة للمدير
+            // إرسال تنبيه آمن ومباشر للمدير
             $whatsappResponse->sendTextMessage(
                 $this->senderPhone,
-                "⚠️ عذراً، حدث عطل تقني أثناء استخراج التقرير المطلوب. تم تسجيل المشكلة للمراجعة."
+                "⚠️ عذراً، تعذر إكمال الاستعلام حالياً بسبب عطل مؤقت في معالجة البيانات. يرجى المحاولة لاحقاً."
             );
         }
     }

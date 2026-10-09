@@ -1,0 +1,372 @@
+============ [ APP FOLDER ] ============
+├── [DIR] Console
+│   ├── [DIR] Commands
+│   │   ├── AutoBackupCommand.php
+├── [DIR] Http
+│   ├── [DIR] Controllers
+│   │   ├── [DIR] Api
+│   │   │   ├── AccountController.php
+│   │   │   ├── AuthController.php
+│   │   │   ├── BackupController.php
+│   │   │   ├── BankController.php
+│   │   │   ├── CategoryController.php
+│   │   │   ├── CustomerController.php
+│   │   │   ├── DashboardController.php
+│   │   │   ├── EmployeeController.php
+│   │   │   ├── ExchangeRateController.php
+│   │   │   ├── ExpenseController.php
+│   │   │   ├── ItemController.php
+│   │   │   ├── JournalEntryController.php
+│   │   │   ├── MaterialConsumptionController.php
+│   │   │   ├── MessageController.php
+│   │   │   ├── OpeningStockController.php
+│   │   │   ├── PriceListController.php
+│   │   │   ├── PricingController.php
+│   │   │   ├── PurchaseController.php
+│   │   │   ├── [DIR] Reports
+│   │   │   │   ├── FinancialReportController.php
+│   │   │   │   ├── InventoryReportController.php
+│   │   │   ├── RoleController.php
+│   │   │   ├── SaleController.php
+│   │   │   ├── StockAdjustmentController.php
+│   │   │   ├── StoreController.php
+│   │   │   ├── SupplierController.php
+│   │   │   ├── TechnicianSaleController.php
+│   │   │   ├── TreasuryController.php
+│   │   │   ├── UnitController.php
+│   │   │   ├── UserController.php
+│   │   │   ├── VoucherController.php
+│   │   │   ├── WhatsAppWebhookController.php
+│   │   ├── Controller.php
+│   ├── [DIR] Middleware
+│   │   ├── ValidateWhatsAppSender.php
+│   ├── [DIR] Requests
+│   │   ├── [DIR] Account
+│   │   │   ├── StoreAccountRequest.php
+│   │   │   ├── UpdateAccountRequest.php
+│   │   ├── [DIR] Bank
+│   │   │   ├── StoreBankRequest.php
+│   │   │   ├── UpdateBankRequest.php
+│   │   ├── [DIR] Category
+│   │   │   ├── StoreCategoryRequest.php
+│   │   │   ├── UpdateCategoryRequest.php
+│   │   ├── [DIR] Customer
+│   │   │   ├── StoreCustomerRequest.php
+│   │   │   ├── UpdateCustomerRequest.php
+│   │   ├── DashboardFilterRequest.php
+│   │   ├── [DIR] Employee
+│   │   │   ├── StoreEmployeeRequest.php
+│   │   │   ├── UpdateEmployeeRequest.php
+│   │   ├── [DIR] Expense
+│   │   │   ├── StoreExpenseRequest.php
+│   │   │   ├── UpdateExpenseRequest.php
+│   │   ├── [DIR] Item
+│   │   │   ├── RefreshStockRequest.php
+│   │   │   ├── StoreItemRequest.php
+│   │   │   ├── UpdateItemReorderLevelRequest.php
+│   │   │   ├── UpdateItemRequest.php
+│   │   ├── [DIR] JournalEntry
+│   │   │   ├── StoreJournalEntryRequest.php
+│   │   │   ├── UpdateJournalEntryRequest.php
+│   │   ├── [DIR] MaterialConsumption
+│   │   │   ├── StoreMaterialConsumptionRequest.php
+│   │   ├── [DIR] Message
+│   │   │   ├── StoreMessageRequest.php
+│   │   ├── [DIR] OpeningStock
+│   │   │   ├── OpeningStockRequest.php
+│   │   ├── [DIR] Pricing
+│   │   │   ├── ApplyBulkRepriceRequest.php
+│   │   │   ├── ApplyForeignCostRequest.php
+│   │   │   ├── PreviewBulkRepriceRequest.php
+│   │   │   ├── PreviewForeignCostRequest.php
+│   │   │   ├── RollbackPriceRequest.php
+│   │   │   ├── StoreExchangeRateRequest.php
+│   │   ├── [DIR] Purchase
+│   │   │   ├── StorePurchaseRequest.php
+│   │   │   ├── UpdatePurchaseRequest.php
+│   │   ├── [DIR] Role
+│   │   │   ├── StoreRoleRequest.php
+│   │   │   ├── UpdateRoleRequest.php
+│   │   ├── [DIR] Sale
+│   │   │   ├── StoreSaleRequest.php
+│   │   │   ├── SwapRawMaterialRequest.php
+│   │   │   ├── UpdateSaleRequest.php
+│   │   ├── [DIR] StockAdjustment
+│   │   │   ├── StoreStockAdjustmentRequest.php
+│   │   │   ├── UpdateStockAdjustmentRequest.php
+│   │   ├── [DIR] Store
+│   │   │   ├── StoreWarehouseRequest.php
+│   │   │   ├── UpdateWarehouseRequest.php
+│   │   ├── [DIR] Supplier
+│   │   │   ├── StoreSupplierRequest.php
+│   │   │   ├── UpdateSupplierRequest.php
+│   │   ├── [DIR] Treasury
+│   │   │   ├── StoreTreasuryRequest.php
+│   │   │   ├── UpdateTreasuryRequest.php
+│   │   ├── [DIR] Unit
+│   │   │   ├── StoreUnitRequest.php
+│   │   │   ├── UpdateUnitRequest.php
+│   │   ├── [DIR] User
+│   │   │   ├── StoreUserRequest.php
+│   │   │   ├── UpdateUserRequest.php
+│   │   ├── [DIR] Voucher
+│   │   │   ├── StoreVoucherRequest.php
+│   │   │   ├── UpdateVoucherRequest.php
+│   ├── [DIR] Resources
+│   │   ├── [DIR] Api
+│   │   │   ├── AccountResource.php
+│   │   │   ├── BankResource.php
+│   │   │   ├── CategoryResource.php
+│   │   │   ├── CustomerResource.php
+│   │   │   ├── DashboardStatsResource.php
+│   │   │   ├── EmployeeResource.php
+│   │   │   ├── ExpenseResource.php
+│   │   │   ├── ItemResource.php
+│   │   │   ├── JournalEntryLineResource.php
+│   │   │   ├── JournalEntryResource.php
+│   │   │   ├── MessageResource.php
+│   │   │   ├── OpeningStockItemResource.php
+│   │   │   ├── OpeningStockResource.php
+│   │   │   ├── PermissionResource.php
+│   │   │   ├── PriceListResource.php
+│   │   │   ├── [DIR] Pricing
+│   │   │   │   ├── BulkRepricingPreviewResource.php
+│   │   │   │   ├── CurrencyResource.php
+│   │   │   │   ├── ItemPriceHistoryMainResource.php
+│   │   │   │   ├── ItemPriceHistoryResource.php
+│   │   │   │   ├── MarginRadarResource.php
+│   │   │   ├── PurchaseItemResource.php
+│   │   │   ├── PurchaseResource.php
+│   │   │   ├── RoleResource.php
+│   │   │   ├── SaleItemResource.php
+│   │   │   ├── SaleResource.php
+│   │   │   ├── StockAdjustmentResource.php
+│   │   │   ├── StoreResource.php
+│   │   │   ├── SupplierResource.php
+│   │   │   ├── TreasuryResource.php
+│   │   │   ├── UnitResource.php
+│   │   │   ├── UserResource.php
+│   │   │   ├── VoucherResource.php
+├── [DIR] Jobs
+│   ├── ProcessWhatsAppMessageJob.php
+│   ├── SendSmsJob.php
+├── [DIR] Models
+│   ├── Account.php
+│   ├── Bank.php
+│   ├── Category.php
+│   ├── Currency.php
+│   ├── Customer.php
+│   ├── Employee.php
+│   ├── ExchangeRate.php
+│   ├── Expense.php
+│   ├── Item.php
+│   ├── ItemBarcode.php
+│   ├── ItemComponent.php
+│   ├── ItemMovement.php
+│   ├── ItemPriceHistory.php
+│   ├── ItemPriceHistoryMain.php
+│   ├── ItemStock.php
+│   ├── ItemUnit.php
+│   ├── ItemUnitPrice.php
+│   ├── JournalEntry.php
+│   ├── JournalEntryLine.php
+│   ├── MaterialConsumption.php
+│   ├── Message.php
+│   ├── OpeningStock.php
+│   ├── OpeningStockItem.php
+│   ├── PriceList.php
+│   ├── Purchase.php
+│   ├── PurchaseItem.php
+│   ├── Sale.php
+│   ├── SaleItem.php
+│   ├── StockAdjustment.php
+│   ├── StockAdjustmentItem.php
+│   ├── Store.php
+│   ├── Supplier.php
+│   ├── Treasury.php
+│   ├── Unit.php
+│   ├── User.php
+│   ├── Voucher.php
+├── [DIR] Policies
+│   ├── AccountPolicy.php
+│   ├── BankPolicy.php
+│   ├── CategoryPolicy.php
+│   ├── CustomerPolicy.php
+│   ├── DashboardPolicy.php
+│   ├── EmployeePolicy.php
+│   ├── ExpensePolicy.php
+│   ├── ItemPolicy.php
+│   ├── JournalEntryPolicy.php
+│   ├── MessagePolicy.php
+│   ├── OpeningStockPolicy.php
+│   ├── PricingPolicy.php
+│   ├── PurchasePolicy.php
+│   ├── RolePolicy.php
+│   ├── SalePolicy.php
+│   ├── StockAdjustmentPolicy.php
+│   ├── StorePolicy.php
+│   ├── SupplierPolicy.php
+│   ├── TreasuryPolicy.php
+│   ├── UnitPolicy.php
+│   ├── UserPolicy.php
+│   ├── VoucherPolicy.php
+├── [DIR] Providers
+│   ├── AppServiceProvider.php
+│   ├── AuthServiceProvider.php
+├── [DIR] Services
+│   ├── DashboardService.php
+│   ├── FinancialDashboardService.php
+│   ├── ItemService.php
+│   ├── JournalEntryService.php
+│   ├── MaterialConsumptionService.php
+│   ├── OnlineBackupService.php
+│   ├── OpeningStockService.php
+│   ├── [DIR] Pricing
+│   │   ├── BulkRepricingService.php
+│   │   ├── ForeignCostSetupService.php
+│   │   ├── MarginRadarService.php
+│   │   ├── PriceRollbackService.php
+│   │   ├── PricingEngineService.php
+│   │   ├── RoundingService.php
+│   ├── PurchaseService.php
+│   ├── SaleService.php
+│   ├── SmsService.php
+│   ├── StockAdjustmentService.php
+│   ├── StockMovementService.php
+│   ├── SubLedgerOpeningBalanceService.php
+│   ├── VoucherService.php
+│   ├── [DIR] WhatsApp
+│   │   ├── [DIR] Contracts
+│   │   │   ├── QueryHandlerInterface.php
+│   │   ├── [DIR] Handlers
+│   │   │   ├── ItemStockQueryHandler.php
+│   │   │   ├── LatestInvoiceQueryHandler.php
+│   │   │   ├── LowStockQueryHandler.php
+│   │   │   ├── MaterialConsumptionQueryHandler.php
+│   │   │   ├── PartyBalanceQueryHandler.php
+│   │   │   ├── SalesQueryHandler.php
+│   │   │   ├── TopDebtorsQueryHandler.php
+│   │   ├── IntentParsingService.php
+│   │   ├── QueryHandlerRegistry.php
+│   │   ├── ReportManagerService.php
+│   │   ├── WhatsAppResponseService.php
+
+============ [ DATABASE FOLDER ] ============
+├── .gitignore
+├── database.sqlite
+├── [DIR] factories
+│   ├── AccountFactory.php
+│   ├── BankFactory.php
+│   ├── CategoryFactory.php
+│   ├── CustomerFactory.php
+│   ├── ExpenseFactory.php
+│   ├── ItemBarcodeFactory.php
+│   ├── ItemFactory.php
+│   ├── ItemUnitFactory.php
+│   ├── ItemUnitPriceFactory.php
+│   ├── OpeningStockItemFactory.php
+│   ├── PriceListFactory.php
+│   ├── PurchaseFactory.php
+│   ├── PurchaseItemFactory.php
+│   ├── SaleFactory.php
+│   ├── SaleItemFactory.php
+│   ├── StockAdjustmentFactory.php
+│   ├── StockAdjustmentItemFactory.php
+│   ├── StoreFactory.php
+│   ├── SupplierFactory.php
+│   ├── TreasuryFactory.php
+│   ├── UnitFactory.php
+│   ├── UserFactory.php
+│   ├── VoucherFactory.php
+├── [DIR] migrations
+│   ├── 0001_01_01_000000_create_users_table.php
+│   ├── 0001_01_01_000001_create_cache_table.php
+│   ├── 0001_01_01_000002_create_jobs_table.php
+│   ├── 2025_10_30_080741_create_personal_access_tokens_table.php
+│   ├── 2025_10_30_084235_create_permission_tables.php
+│   ├── 2026_03_01_153104_create_messages_table.php
+│   ├── 2026_05_29_083554_create_accounts_table.php
+│   ├── 2026_05_29_083602_create_treasuries_table.php
+│   ├── 2026_05_29_083609_create_banks_table.php
+│   ├── 2026_05_29_083616_create_customers_table.php
+│   ├── 2026_05_29_083639_create_suppliers_table.php
+│   ├── 2026_05_29_083824_create_journal_entries_table.php
+│   ├── 2026_05_29_083831_create_journal_entry_lines_table.php
+│   ├── 2026_05_29_084318_create_expenses_table.php
+│   ├── 2026_05_29_094502_create_categories_table.php
+│   ├── 2026_05_29_094502_create_stores_table.php
+│   ├── 2026_05_29_094502_create_units_table.php
+│   ├── 2026_05_29_113934_create_price_lists_table.php
+│   ├── 2026_05_29_113935_create_items_table.php
+│   ├── 2026_05_29_113936_create_item_units_table.php
+│   ├── 2026_05_29_113937_create_item_barcodes_table.php
+│   ├── 2026_05_29_113938_create_item_unit_prices_table.php
+│   ├── 2026_05_29_115922_create_item_stocks_table.php
+│   ├── 2026_05_29_120203_create_item_movements_table.php
+│   ├── 2026_06_01_072900_create_purchases_table.php
+│   ├── 2026_06_01_073000_create_purchase_items_table.php
+│   ├── 2026_06_01_073133_create_sales_table.php
+│   ├── 2026_06_01_073200_create_sale_items_table.php
+│   ├── 2026_06_01_082606_add_unit_id_to_item_movements_table.php
+│   ├── 2026_06_02_165102_create_vouchers_table.php
+│   ├── 2026_06_03_094628_create_stock_adjustments_table.php
+│   ├── 2026_06_03_094633_create_stock_adjustment_items_table.php
+│   ├── 2026_06_03_143246_create_opening_stocks_table.php
+│   ├── 2026_06_03_143248_create_opening_stock_items_table.php
+│   ├── 2026_06_09_134938_update_accounts_and_journal_entry_lines_tables.php
+│   ├── 2026_06_09_135030_add_balance_fields_to_sub_ledgers_tables.php
+│   ├── 2026_06_09_172525_add_balances_to_expenses_table.php
+│   ├── 2026_06_09_180451_add_balances_to_stores_table.php
+│   ├── 2026_06_10_084058_add_opening_balance_to_journal_entries_type_enum.php
+│   ├── 2026_06_13_105707_add_type_to_users_table.php
+│   ├── 2026_06_13_114023_add_is_dimensional_to_items_table.php
+│   ├── 2026_06_13_114048_add_dimensions_to_sale_items_table.php
+│   ├── 2026_06_20_134246_add_system_bindings_to_users_table.php
+│   ├── 2026_06_20_152855_modify_payment_type_in_sales_table.php
+│   ├── 2026_06_20_153243_add_treasury_and_bank_foreign_columns_to_sales_table.php
+│   ├── 2026_06_21_160103_add_cash_and_bank_sub_ledgers_to_vouchers_table.php
+│   ├── 2026_06_21_161110_update_payment_type_in_purchases_table.php
+│   ├── 2026_06_21_161144_add_financial_columns_to_purchases_table.php
+│   ├── 2026_06_23_070907_add_designer_fields_to_sales_table.php
+│   ├── 2026_06_23_070936_add_is_designed_to_sale_items_table.php
+│   ├── 2026_06_23_082653_add_balance_fields_to_users_table.php
+│   ├── 2026_06_25_052938_add_production_status_to_sales_table.php
+│   ├── 2026_06_27_060148_add_sale_type_to_sales_table.php
+│   ├── 2026_07_02_185759_add_reorder_level_to_item_stocks_table.php
+│   ├── 2026_07_13_171317_update_sub_ledger_type_to_fqcn.php
+│   ├── 2026_07_16_095341_add_composite_and_printing_columns_to_existing_tables.php
+│   ├── 2026_07_16_095417_create_item_components_table.php
+│   ├── 2026_07_16_165244_add_price_list_id_to_customers_table.php
+│   ├── 2026_07_16_165312_add_price_type_to_sale_items_table.php
+│   ├── 2026_07_17_122934_add_items_per_sheet_to_sale_items_table.php
+│   ├── 2026_07_17_134045_create_material_consumptions_table.php
+│   ├── 2026_07_22_202013_create_employees_table.php
+│   ├── 2026_07_25_041159_remove_printing_fields_from_sales_and_items_tables.php
+│   ├── 2026_08_11_090355_add_expiry_date_to_items_table.php
+│   ├── 2026_08_14_100536_add_selling_price_to_purchase_items_table.php
+│   ├── 2026_08_14_110605_add_profit_margin_to_purchase_items_table.php
+│   ├── 2026_08_14_113800_add_expiry_date_to_purchase_items_table.php
+│   ├── 2026_08_16_114618_add_stock_control_to_users_table.php
+│   ├── 2026_08_22_092749_create_currencies_table.php
+│   ├── 2026_08_22_092819_create_exchange_rates_table.php
+│   ├── 2026_08_22_092912_add_currency_columns_to_purchases_table.php
+│   ├── 2026_08_22_092933_add_currency_columns_to_purchase_items_table.php
+│   ├── 2026_08_22_093006_add_pricing_columns_to_items_table.php
+│   ├── 2026_08_22_093123_create_item_price_histories_table.php
+│   ├── 2026_08_22_161730_add_foreign_cost_to_item_units_table.php
+│   ├── 2026_08_28_043127_create_item_price_history_mains_table.php
+│   ├── 2026_08_28_043130_add_item_price_history_main_id_to_item_price_histories_table.php
+├── [DIR] seeders
+│   ├── CurrencySeeder.php
+│   ├── DatabaseSeeder.php
+│   ├── DemoDataSeeder.php
+│   ├── FinancialStructureSeeder.php
+│   ├── PermissionSeeder.php
+│   ├── PriceListSeeder.php
+│   ├── UserSeeder.php
+
+============ [ ROUTES FOLDER ] ============
+├── api.php
+├── console.php
+├── web.php
+
