@@ -8,10 +8,10 @@ use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Log;
 use Throwable;
 
-class TopDebtorsQueryHandler implements QueryHandlerInterface
+class PartyBalanceQueryHandler implements QueryHandlerInterface
 {
     /**
-     * ربط مفاتيح الفروع بأسماء اتصالات قاعدة البيانات (في حال وجود قواعد بيانات منفصلة لكل فرع)
+     * ربط مفاتيح الفروع بأسماء اتصالات قاعدة البيانات
      */
     protected array $branchConnections = [
         'omd'    => 'branch_main',
@@ -32,31 +32,36 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
 
     public function getIntentName(): string
     {
-        return 'top_debtors';
+        return 'party_balance';
     }
 
     public function getDescription(): string
     {
-        return 'عرض أعلى 10 عملاء مدينين بأعلى الأرصدة والمديونيات المستحقة للشركة عبر الفروع.';
+        return 'الاستعلام عن رصيد حساب عميل أو جهة تعامل محددة بالاسم أو رقم الهاتف.';
     }
 
     public function handle(array $parsedIntent): string
     {
-        $targetBranch = $parsedIntent['branch'] ?? 'all';
+        $searchTerm = $parsedIntent['party_name'] 
+            ?? $parsedIntent['customer_name'] 
+            ?? $parsedIntent['query'] 
+            ?? $parsedIntent['search'] 
+            ?? null;
 
-        // فحص ما إذا كان النظام يعمل باتصالات فروع متعددة أو اتصال افتراضي واحد
+        if (empty($searchTerm)) {
+            return "⚠️ يرجى تحديد اسم العميل أو رقم هاتفه للاستعلام عن الرصيد (مثال: رصيد أحمد محمد).";
+        }
+
+        $targetBranch = $parsedIntent['branch'] ?? 'all';
         $availableBranchConnections = $this->getAvailableBranchConnections();
 
         if (empty($availableBranchConnections)) {
-            return $this->handleSingleConnection();
+            return $this->handleSingleConnection($searchTerm);
         }
 
-        return $this->handleMultiBranchConnections($targetBranch, $availableBranchConnections);
+        return $this->handleMultiBranchConnections($searchTerm, $targetBranch, $availableBranchConnections);
     }
 
-    /**
-     * التحقق من اتصالات الفروع المعرفة في config/database.php
-     */
     protected function getAvailableBranchConnections(): array
     {
         $available = [];
@@ -70,54 +75,36 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
         return $available;
     }
 
-    /**
-     * معالجة الاستعلام للعميل الذي يملك قاعدة بيانات واحدة افتراضية (Single Database Mode)
-     */
-    protected function handleSingleConnection(): string
+    protected function handleSingleConnection(string $searchTerm): string
     {
         $currency = config('app.currency', 'SDG');
 
         try {
             $customers = Customer::whereNull('deleted_at')
-                ->where('current_balance', '>', 0)
-                ->orderBy('current_balance', 'desc')
-                ->take(10)
+                ->where(function ($query) use ($searchTerm) {
+                    $query->where('name', 'like', "%{$searchTerm}%")
+                          ->orWhere('phone', 'like', "%{$searchTerm}%");
+                })
+                ->take(5)
                 ->get();
 
             if ($customers->isEmpty()) {
-                return "✅ *ممتاز!* لا يوجد أي عملاء مدينين بمديونيات مسجلة حالياً.";
+                return "⚠️ لم يتم العثور على أي عميل يطابق البحث: *{$searchTerm}*.";
             }
 
-            $output = "🚨 *قائمة أعلى 10 عملاء مدينين*\n";
-            $output .= "-----------------------------------\n";
-
-            $totalDebt = 0.0;
-            foreach ($customers as $index => $customer) {
-                $rank = $index + 1;
-                $name = $customer->name;
-                $balance = (float) $customer->current_balance;
-                $totalDebt += $balance;
-
-                $output .= "{$rank}️⃣ *{$name}*\n";
-                $output .= "   └ المديونية: *" . number_format($balance, 0) . " {$currency}*\n\n";
+            if ($customers->count() === 1) {
+                return $this->formatSingleCustomerOutput($customers->first(), $currency);
             }
 
-            $output .= "-----------------------------------\n";
-            $output .= "💰 *إجمالي مديونيات هذه القائمة*: *" . number_format($totalDebt, 0) . " {$currency}*";
-
-            return trim($output);
+            return $this->formatMultipleCustomersOutput($customers, $currency);
 
         } catch (Throwable $e) {
-            Log::error("TopDebtorsQueryHandler SingleConnection Error: " . $e->getMessage());
-
-            return "⚠️ تعذر استخراج قائمة العملاء المدينين حالياً، يرجى المحاولة لاحقاً.";
+            Log::error("PartyBalanceQueryHandler SingleConnection Error: " . $e->getMessage());
+            return "⚠️ تعذر استخراج رصيد العميل حالياً، يرجى المحاولة لاحقاً.";
         }
     }
 
-    /**
-     * معالجة الاستعلام للعملاء الذين يمتلكون قواعد بيانات مستقلة لكل فرع (Multi-Database Mode)
-     */
-    protected function handleMultiBranchConnections(string $targetBranch, array $availableBranchConnections): string
+    protected function handleMultiBranchConnections(string $searchTerm, string $targetBranch, array $availableBranchConnections): string
     {
         $currency = config('app.currency', 'SDG');
 
@@ -128,76 +115,107 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
             $connectionsToQuery[$targetBranch] = $availableBranchConnections[$targetBranch];
         }
 
-        $debtorsList = [];
+        $matches = [];
 
         foreach ($connectionsToQuery as $branchKey => $connectionName) {
             try {
                 $customers = Customer::on($connectionName)
                     ->whereNull('deleted_at')
-                    ->where('current_balance', '>', 0)
-                    ->orderBy('current_balance', 'desc')
-                    ->take(10)
+                    ->where(function ($query) use ($searchTerm) {
+                        $query->where('name', 'like', "%{$searchTerm}%")
+                              ->orWhere('phone', 'like', "%{$searchTerm}%");
+                    })
+                    ->take(5)
                     ->get();
+
+                $branchLabel = $this->branchLabels[$branchKey] ?? "فرع ({$branchKey})";
 
                 foreach ($customers as $customer) {
                     $key = $customer->phone ?: $customer->name;
-                    $branchLabel = $this->branchLabels[$branchKey] ?? "فرع ({$branchKey})";
-
-                    if (!isset($debtorsList[$key])) {
-                        $debtorsList[$key] = [
-                            'name'    => $customer->name,
-                            'phone'   => $customer->phone ?? 'غير مسجل',
-                            'balance' => (float) $customer->current_balance,
-                            'branch'  => $branchLabel,
+                    if (!isset($matches[$key])) {
+                        $matches[$key] = [
+                            'name'     => $customer->name,
+                            'phone'    => $customer->phone ?? 'غير مسجل',
+                            'balances' => [$branchLabel => (float) $customer->current_balance],
+                            'total'    => (float) $customer->current_balance,
                         ];
                     } else {
-                        // تجميع الأرصدة في حال وجود العميل في أكثر من فرع
-                        $debtorsList[$key]['balance'] += (float) $customer->current_balance;
+                        $matches[$key]['balances'][$branchLabel] = (float) $customer->current_balance;
+                        $matches[$key]['total'] += (float) $customer->current_balance;
                     }
                 }
             } catch (Throwable $e) {
-                Log::error("TopDebtorsQueryHandler Error [{$branchKey}]: " . $e->getMessage());
+                Log::error("PartyBalanceQueryHandler Error [{$branchKey}]: " . $e->getMessage());
             }
         }
 
-        if (empty($debtorsList)) {
-            return "✅ *ممتاز!* لا يوجد أي عملاء مدينين بمديونيات مسجلة حالياً.";
+        if (empty($matches)) {
+            return "⚠️ لم يتم العثور على أي عميل يطابق البحث: *{$searchTerm}*.";
         }
 
-        // فرز القائمة المجمعة تنازلياً وأخذ أعلى 10 فقط
-        usort($debtorsList, fn($a, $b) => $b['balance'] <=> $a['balance']);
-        $top10 = array_slice($debtorsList, 0, 10);
-
-        return $this->formatMultiBranchWhatsAppOutput($top10, $targetBranch, $currency);
-    }
-
-    /**
-     * تنسيق مخرجات الواتساب في بيئة الفروع المتعددة
-     */
-    protected function formatMultiBranchWhatsAppOutput(array $debtors, string $targetBranch, string $currency): string
-    {
-        $branchTitle = ($targetBranch !== 'all' && isset($this->branchLabels[$targetBranch]))
-            ? "({$this->branchLabels[$targetBranch]})"
-            : "(جميع الفروع)";
-
-        $output = "🚨 *قائمة أعلى 10 عملاء مدينين {$branchTitle}*\n";
+        $output = "📄 *نتائج الاستعلام عن رصيد العميل:*\n";
         $output .= "-----------------------------------\n";
 
-        $totalDebt = 0.0;
-        foreach ($debtors as $index => $debtor) {
-            $rank = $index + 1;
-            $name = $debtor['name'];
-            $balance = number_format($debtor['balance'], 0);
-            $totalDebt += $debtor['balance'];
+        foreach ($matches as $data) {
+            $status = $this->getBalanceStatusText($data['total']);
+            $output .= "👤 *الاسم:* {$data['name']}\n";
+            $output .= "📞 *الهاتف:* {$data['phone']}\n";
+            $output .= "💰 *الرصيد الإجمالي:* *" . number_format(abs($data['total']), 0) . " {$currency}* ({$status})\n";
 
-            $output .= "{$rank}️⃣ *{$name}*\n";
-            $output .= "   ├ المديونية: *{$balance} {$currency}*\n";
-            $output .= "   └ الفرع: {$debtor['branch']}\n\n";
+            if (count($data['balances']) > 1) {
+                $output .= "📌 *تفاصيل الفروع:*\n";
+                foreach ($data['balances'] as $branch => $bal) {
+                    $output .= "   └ {$branch}: " . number_format($bal, 0) . " {$currency}\n";
+                }
+            }
+            $output .= "-----------------------------------\n";
         }
-
-        $output .= "-----------------------------------\n";
-        $output .= "💰 *إجمالي مديونيات هذه القائمة*: *" . number_format($totalDebt, 0) . " {$currency}*";
 
         return trim($output);
+    }
+
+    protected function formatSingleCustomerOutput(Customer $customer, string $currency): string
+    {
+        $balance = (float) $customer->current_balance;
+        $status = $this->getBalanceStatusText($balance);
+
+        $output = "📄 *بيانات رصيد العميل:*\n";
+        $output .= "-----------------------------------\n";
+        $output .= "👤 *الاسم:* {$customer->name}\n";
+        $output .= "📞 *الهاتف:* " . ($customer->phone ?? 'غير مسجل') . "\n";
+        $output .= "💰 *الرصيد الحالي:* *" . number_format(abs($balance), 0) . " {$currency}*\n";
+        $output .= "📌 *الحالة:* {$status}\n";
+        $output .= "-----------------------------------";
+
+        return $output;
+    }
+
+    protected function formatMultipleCustomersOutput($customers, string $currency): string
+    {
+        $output = "🔍 *تم العثور على أكثر من عميل، يرجى التحديد بدقة:*\n";
+        $output .= "-----------------------------------\n";
+
+        foreach ($customers as $index => $customer) {
+            $num = $index + 1;
+            $balance = (float) $customer->current_balance;
+            $status = $this->getBalanceStatusText($balance);
+            $output .= "{$num}️⃣ *{$customer->name}* (" . ($customer->phone ?? 'بدون رقم') . ")\n";
+            $output .= "   └ الرصيد: *" . number_format(abs($balance), 0) . " {$currency}* ({$status})\n";
+        }
+
+        $output .= "-----------------------------------\n";
+        $output .= "💡 أعد كتابة الاسم كاملاً أو برقم الهاتف للتدقيق.";
+
+        return $output;
+    }
+
+    protected function getBalanceStatusText(float $balance): string
+    {
+        if ($balance > 0) {
+            return "مدين (مستحق على العميل للشركة) 🔴";
+        } elseif ($balance < 0) {
+            return "دائن (مستحق للعميل على الشركة) 🟢";
+        }
+        return "حساب متوازن (خالص) ⚪";
     }
 }

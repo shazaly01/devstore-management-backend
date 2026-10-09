@@ -15,11 +15,35 @@ use App\Services\WhatsApp\Handlers\MaterialConsumptionQueryHandler;
 class AppServiceProvider extends ServiceProvider
 {
     /**
+     * قائمة معالجات استعلامات الواتساب لتسجيلها في النظام
+     *
+     * @var array<int, class-string>
+     */
+    protected array $whatsAppHandlers = [
+        SalesQueryHandler::class,
+        PartyBalanceQueryHandler::class,
+        ItemStockQueryHandler::class,
+        LatestInvoiceQueryHandler::class,
+        TopDebtorsQueryHandler::class,
+        LowStockQueryHandler::class,
+        MaterialConsumptionQueryHandler::class,
+    ];
+
+    /**
      * Register any application services.
      */
     public function register(): void
     {
-        //
+        // تسجيل سجل استعلامات الواتساب المركزي كـ Singleton في حاوية الخدمات
+        $this->app->singleton(QueryHandlerRegistry::class, function ($app) {
+            $registry = new QueryHandlerRegistry();
+
+            foreach ($this->whatsAppHandlers as $handlerClass) {
+                $registry->register($app->make($handlerClass));
+            }
+
+            return $registry;
+        });
     }
 
     /**
@@ -27,20 +51,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // تسجيل سجل استعلامات الواتساب المركزي كـ Singleton
-        $this->app->singleton(QueryHandlerRegistry::class, function ($app) {
-            $registry = new QueryHandlerRegistry();
-
-            // تسجيل معالجات الاستعلامات المتاحة في النظام
-            $registry->register($app->make(SalesQueryHandler::class));
-            $registry->register($app->make(PartyBalanceQueryHandler::class));
-            $registry->register($app->make(ItemStockQueryHandler::class));
-            $registry->register($app->make(LatestInvoiceQueryHandler::class));
-            $registry->register($app->make(TopDebtorsQueryHandler::class));
-            $registry->register($app->make(LowStockQueryHandler::class));
-            $registry->register($app->make(MaterialConsumptionQueryHandler::class));
-
-            return $registry;
-        });
+        //
     }
 }
