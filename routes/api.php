@@ -39,6 +39,7 @@ use App\Http\Controllers\Api\MaterialConsumptionController;
 // --- استيراد متحكمات موديول التسعير والعملات الجديد ---
 use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\Api\ExchangeRateController;
+use App\Http\Controllers\Api\WhatsAppWebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -48,6 +49,9 @@ use App\Http\Controllers\Api\ExchangeRateController;
 
 // --- المسارات العامة (Public Routes) ---
 Route::post('/login', [AuthController::class, 'login']);
+
+Route::post('/whatsapp/webhook', [WhatsAppWebhookController::class, 'handle'])
+    ->middleware(\App\Http\Middleware\ValidateWhatsAppSender::class);
 
 // --- المسارات المحمية (Protected Routes) ---
 Route::middleware('auth:sanctum')->group(function () {
