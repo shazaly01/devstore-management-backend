@@ -19,7 +19,7 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
 
     public function getDescription(): string
     {
-        return 'عرض أعلى 10 عملاء مدينين بأعلى المديونيات والمبالغ المستحقة للشركة عبر الفروع.';
+        return 'عرض أعلى 10 عملاء عليهم مديونيات أو أرصدة مستحقة للشركة مرتبة من الأعلى إلى الأقل.';
     }
 
     public function handle(array $parsedIntent): string
@@ -35,7 +35,7 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * معالجة الاستعلام لنمط قاعدة البيانات الواحدة
+     * معالجة الاستعلام المباشر للنظام العادي (بدون أي ذكر للفروع)
      */
     protected function handleSingleConnection(): string
     {
@@ -49,11 +49,10 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
                 ->get();
 
             if ($customers->isEmpty()) {
-                return "✅ *ممتاز!* لا توجد أي مديونيات متأخرة على العملاء حالياً.";
+                return "✅ *ممتاز!* لا توجد أي مديونيات مسجلة على العملاء حالياً.";
             }
 
-            $output = "📋 *قائمة أعلى 10 عملاء مدينين (الديون المستحقة)*\n";
-            $output .= "🏢 *الفرع*: المركز الرئيسي\n";
+            $output = "👥 *تقرير ديون وأرصدة العملاء (أعلى 10 مستحقين)*\n";
             $output .= "-----------------------------------\n";
 
             $totalDebt = 0.0;
@@ -65,23 +64,23 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
                 $totalDebt += $balance;
 
                 $output .= "{$rank}️⃣ *{$name}*{$phone}\n";
-                $output .= "   └ المديونية: *" . number_format($balance, 0) . " {$currency}*\n\n";
+                $output .= "   └ المبلغ المستحق: *" . number_format($balance, 0) . " {$currency}*\n\n";
             }
 
             $output .= "-----------------------------------\n";
-            $output .= "💰 *إجمالي مديونيات هذه القائمة*: *" . number_format($totalDebt, 0) . " {$currency}*";
+            $output .= "💰 *إجمالي ديون العملاء الموضحة*: *" . number_format($totalDebt, 0) . " {$currency}*";
 
             return trim($output);
 
         } catch (Throwable $e) {
             Log::error("TopDebtorsQueryHandler SingleConnection Error: " . $e->getMessage());
 
-            return "⚠️ تعذر استخراج قائمة مديونيات العملاء حالياً، يرجى المحاولة لاحقاً.";
+            return "⚠️ تعذر استخراج تقرير ديون العملاء حالياً، يرجى المحاولة لاحقاً.";
         }
     }
 
     /**
-     * معالجة الاستعلام لنمط الفروع المتعددة
+     * معالجة الاستعلام في حال تفعيل الفروع اختيارياً
      */
     protected function handleMultiBranchConnections(string $targetBranch, array $availableBranchConnections): string
     {
@@ -106,12 +105,11 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
                     if (!isset($debtorsList[$key])) {
                         $debtorsList[$key] = [
                             'name'    => $customer->name,
-                            'phone'   => $customer->phone ? $customer->phone : 'غير مسجل',
+                            'phone'   => $customer->phone ? $customer->phone : '',
                             'balance' => (float) $customer->current_balance,
                             'branch'  => $branchLabel,
                         ];
                     } else {
-                        // تجميع الأرصدة في حال تكرار العميل عبر الفروع
                         $debtorsList[$key]['balance'] += (float) $customer->current_balance;
                     }
                 }
@@ -121,43 +119,30 @@ class TopDebtorsQueryHandler implements QueryHandlerInterface
         }
 
         if (empty($debtorsList)) {
-            return "✅ *ممتاز!* لا توجد أي مديونيات متأخرة على العملاء حالياً.";
+            return "✅ *ممتاز!* لا توجد أي مديونيات مسجلة على العملاء حالياً.";
         }
 
-        // الترتيب تنازلياً وأخذ أعلى 10 عملاء
         usort($debtorsList, fn($a, $b) => $b['balance'] <=> $a['balance']);
         $top10 = array_slice($debtorsList, 0, 10);
 
-        return $this->formatMultiBranchWhatsAppOutput($top10, $targetBranch, $currency);
-    }
-
-    /**
-     * تنسيق مخرجات الواتساب في بيئة الفروع المتعددة
-     */
-    protected function formatMultiBranchWhatsAppOutput(array $debtors, string $targetBranch, string $currency): string
-    {
-        $branchTitle = ($targetBranch !== 'all' and isset($this->branchLabels[$targetBranch]))
-            ? "({$this->branchLabels[$targetBranch]})"
-            : "(كافة الفروع)";
-
-        $output = "📋 *قائمة أعلى 10 عملاء مدينين {$branchTitle}*\n";
+        $output = "👥 *تقرير ديون وأرصدة العملاء (أعلى 10 مستحقين)*\n";
         $output .= "-----------------------------------\n";
 
         $totalDebt = 0.0;
-        foreach ($debtors as $index => $debtor) {
+        foreach ($top10 as $index => $debtor) {
             $rank = $index + 1;
             $name = $debtor['name'];
-            $phone = ($debtor['phone'] !== 'غير مسجل') ? " ({$debtor['phone']})" : "";
+            $phone = !empty($debtor['phone']) ? " ({$debtor['phone']})" : "";
             $balance = number_format($debtor['balance'], 0);
             $totalDebt += $debtor['balance'];
 
             $output .= "{$rank}️⃣ *{$name}*{$phone}\n";
-            $output .= "   ├ المديونية: *{$balance} {$currency}*\n";
-            $output .= "   └ الفرع: {$debtor['branch']}\n\n";
+            $output .= "   ├ المبلغ المستحق: *{$balance} {$currency}*\n";
+            $output .= "   └ جهة القيد: {$debtor['branch']}\n\n";
         }
 
         $output .= "-----------------------------------\n";
-        $output .= "💰 *إجمالي مديونيات هذه القائمة*: *" . number_format($totalDebt, 0) . " {$currency}*";
+        $output .= "💰 *إجمالي ديون العملاء الموضحة*: *" . number_format($totalDebt, 0) . " {$currency}*";
 
         return trim($output);
     }

@@ -19,7 +19,7 @@ class TopCreditorsQueryHandler implements QueryHandlerInterface
 
     public function getDescription(): string
     {
-        return 'عرض أعلى 10 موردين دائنين بأعلى الأرصدة والالتزامات المالية المستحقة على الشركة عبر الفروع.';
+        return 'عرض أعلى 10 موردين لهم مستحقات أو ديون مالية على الشركة مرتبة من الأعلى إلى الأقل.';
     }
 
     public function handle(array $parsedIntent): string
@@ -35,7 +35,7 @@ class TopCreditorsQueryHandler implements QueryHandlerInterface
     }
 
     /**
-     * معالجة الاستعلام لنمط قاعدة البيانات الواحدة
+     * معالجة الاستعلام المباشر للنظام العادي (بدون أي ذكر للفروع)
      */
     protected function handleSingleConnection(): string
     {
@@ -49,38 +49,38 @@ class TopCreditorsQueryHandler implements QueryHandlerInterface
                 ->get();
 
             if ($suppliers->isEmpty()) {
-                return "✅ *ممتاز!* لا توجد أي التزامات أو مديونيات مستحقة للموردين حالياً.";
+                return "✅ *ممتاز!* لا توجد أي مستحقات أو ديون مسجلة للموردين حالياً.";
             }
 
-            $output = "📋 *قائمة أعلى 10 موردين دائنين (مستحقات التوريد)*\n";
-            $output .= "🏢 *الفرع*: المركز الرئيسي\n";
+            $output = "📋 *تقرير مستحقات وديون الموردين (أعلى 10 مستحقين)*\n";
             $output .= "-----------------------------------\n";
 
             $totalDebt = 0.0;
             foreach ($suppliers as $index => $supplier) {
                 $rank = $index + 1;
                 $name = $supplier->name;
+                $phone = $supplier->phone ? " ({$supplier->phone})" : "";
                 $balance = (float) $supplier->current_balance;
                 $totalDebt += $balance;
 
-                $output .= "{$rank}️⃣ *{$name}*\n";
+                $output .= "{$rank}️⃣ *{$name}*{$phone}\n";
                 $output .= "   └ المستحق له: *" . number_format($balance, 0) . " {$currency}*\n\n";
             }
 
             $output .= "-----------------------------------\n";
-            $output .= "💰 *إجمالي مستحقات هذه القائمة*: *" . number_format($totalDebt, 0) . " {$currency}*";
+            $output .= "💰 *إجمالي مستحقات الموردين الموضحة*: *" . number_format($totalDebt, 0) . " {$currency}*";
 
             return trim($output);
 
         } catch (Throwable $e) {
             Log::error("TopCreditorsQueryHandler SingleConnection Error: " . $e->getMessage());
 
-            return "⚠️ تعذر استخراج قائمة مستحقات الموردين حالياً، يرجى المحاولة لاحقاً.";
+            return "⚠️ تعذر استخراج تقرير مستحقات الموردين حالياً، يرجى المحاولة لاحقاً.";
         }
     }
 
     /**
-     * معالجة الاستعلام لنمط الفروع المتعددة
+     * معالجة الاستعلام في حال تفعيل الفروع اختيارياً
      */
     protected function handleMultiBranchConnections(string $targetBranch, array $availableBranchConnections): string
     {
@@ -105,12 +105,11 @@ class TopCreditorsQueryHandler implements QueryHandlerInterface
                     if (!isset($creditorsList[$key])) {
                         $creditorsList[$key] = [
                             'name'    => $supplier->name,
-                            'phone'   => $supplier->phone ? $supplier->phone : 'غير مسجل',
+                            'phone'   => $supplier->phone ? $supplier->phone : '',
                             'balance' => (float) $supplier->current_balance,
                             'branch'  => $branchLabel,
                         ];
                     } else {
-                        // تجميع الأرصدة في حال تكرار المورد عبر الفروع
                         $creditorsList[$key]['balance'] += (float) $supplier->current_balance;
                     }
                 }
@@ -120,42 +119,30 @@ class TopCreditorsQueryHandler implements QueryHandlerInterface
         }
 
         if (empty($creditorsList)) {
-            return "✅ *ممتاز!* لا توجد أي التزامات أو مديونيات مستحقة للموردين حالياً.";
+            return "✅ *ممتاز!* لا توجد أي مستحقات أو ديون مسجلة للموردين حالياً.";
         }
 
-        // الفرز تنازلياً وأخذ أعلى 10 موردين
         usort($creditorsList, fn($a, $b) => $b['balance'] <=> $a['balance']);
         $top10 = array_slice($creditorsList, 0, 10);
 
-        return $this->formatMultiBranchWhatsAppOutput($top10, $targetBranch, $currency);
-    }
-
-    /**
-     * تنسيق مخرجات الواتساب في بيئة الفروع المتعددة
-     */
-    protected function formatMultiBranchWhatsAppOutput(array $creditors, string $targetBranch, string $currency): string
-    {
-        $branchTitle = ($targetBranch !== 'all' and isset($this->branchLabels[$targetBranch]))
-            ? "({$this->branchLabels[$targetBranch]})"
-            : "(كافة الفروع)";
-
-        $output = "📋 *قائمة أعلى 10 موردين دائنين {$branchTitle}*\n";
+        $output = "📋 *تقرير مستحقات وديون الموردين (أعلى 10 مستحقين)*\n";
         $output .= "-----------------------------------\n";
 
         $totalDebt = 0.0;
-        foreach ($creditors as $index => $creditor) {
+        foreach ($top10 as $index => $creditor) {
             $rank = $index + 1;
             $name = $creditor['name'];
+            $phone = !empty($creditor['phone']) ? " ({$creditor['phone']})" : "";
             $balance = number_format($creditor['balance'], 0);
             $totalDebt += $creditor['balance'];
 
-            $output .= "{$rank}️⃣ *{$name}*\n";
+            $output .= "{$rank}️⃣ *{$name}*{$phone}\n";
             $output .= "   ├ المستحق له: *{$balance} {$currency}*\n";
-            $output .= "   └ الفرع: {$creditor['branch']}\n\n";
+            $output .= "   └ جهة القيد: {$creditor['branch']}\n\n";
         }
 
         $output .= "-----------------------------------\n";
-        $output .= "💰 *إجمالي مستحقات هذه القائمة*: *" . number_format($totalDebt, 0) . " {$currency}*";
+        $output .= "💰 *إجمالي مستحقات الموردين الموضحة*: *" . number_format($totalDebt, 0) . " {$currency}*";
 
         return trim($output);
     }

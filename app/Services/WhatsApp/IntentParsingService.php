@@ -9,10 +9,10 @@ use Throwable;
 class IntentParsingService
 {
     /**
-     * المسار السريع للأنماط المباشرة الشائعة (0 توكن)
+     * المسار السريع للأنماط المباشرة الشائعة بألفاظ السوق المباشرة (0 توكن)
      */
     protected array $quickPatterns = [
-        // 1. دليل الأوامر والمساعدة المباشرة
+        // 1. دليل الأوامر والمساعدة
         '/^(التعليمات|تعليمات|مساعدة|الاوامر|الأوامر|القائمة|منيو|دليل|اوامر|أوامر|help|menu|\?|؟)$/ui' => ['intent' => 'help_menu', 'branch' => 'all'],
 
         // 2. المبيعات
@@ -23,17 +23,24 @@ class IntentParsingService
         '/^(مبيعات هذا الشهر|مبيعات الشهر)$/u'               => ['intent' => 'sales_report', 'period' => 'this_month', 'branch' => 'all'],
         '/^(مبيعات الشهر الماضي|مبيعات الشهر الفات)$/u'      => ['intent' => 'sales_report', 'period' => 'last_month', 'branch' => 'all'],
 
-        // 3. السيولة والمصروفات
-        '/^(السيولة|موقف السيولة|الكاش|رصيد الخزائن|البنوك)$/u' => ['intent' => 'liquidity_summary', 'branch' => 'all'],
+        // 3. السيولة والخزائن والبنوك
+        '/^(السيولة|موقف السيولة|الكاش|رصيد الخزائن|رصيد الخزينة|البنوك|رصيد البنك)$/u' => ['intent' => 'liquidity_summary', 'branch' => 'all'],
+
+        // 4. المصروفات
         '/^(مصروفات اليوم|صرفيات اليوم)$/u'                   => ['intent' => 'expenses_summary', 'period' => 'today', 'branch' => 'all'],
         '/^(مصروفات امس|مصروفات أمس|صرفيات امس)$/u'           => ['intent' => 'expenses_summary', 'period' => 'yesterday', 'branch' => 'all'],
         '/^(مصروفات هذا الاسبوع|صرفيات هذا الاسبوع)$/u'       => ['intent' => 'expenses_summary', 'period' => 'this_week', 'branch' => 'all'],
         '/^(مصروفات هذا الشهر|صرفيات هذا الشهر)$/u'           => ['intent' => 'expenses_summary', 'period' => 'this_month', 'branch' => 'all'],
+        '/^(مصروفات الشهر الماضي|صرفيات الشهر الفات)$/u'      => ['intent' => 'expenses_summary', 'period' => 'last_month', 'branch' => 'all'],
 
-        // 4. المخزون والديون
+        // 5. المخزون والنواقص
         '/^(النواقص|تقرير النواقص|الاصناف المنتهية)$/u'        => ['intent' => 'low_stock', 'branch' => 'all'],
-        '/^(كبار المدينين|اعلى المدينين|الديون)$/u'           => ['intent' => 'top_debtors', 'branch' => 'all'],
-        '/^(كبار الموردين|ديون الموردين|المستحقات)$/u'         => ['intent' => 'top_creditors', 'branch' => 'all'],
+
+        // 6. ديون وأرصدة العملاء
+        '/^(ديون العملاء|ارصدة العملاء|أرصدة العملاء|حسابات العملاء|كبار العملاء|كبار المدينين)$/u' => ['intent' => 'top_debtors', 'branch' => 'all'],
+
+        // 7. مستحقات وديون الموردين
+        '/^(مستحقات الموردين|ديون الموردين|ارصدة الموردين|أرصدة الموردين|حسابات الموردين|كبار الموردين)$/u' => ['intent' => 'top_creditors', 'branch' => 'all'],
     ];
 
     /**
@@ -47,13 +54,13 @@ class IntentParsingService
             return null;
         }
 
-        // 1. فحص المسار السريع للأوامر المباشرة والتعليمات (0 توكن)
+        // 1. فحص المسار السريع للأوامر المباشرة (0 توكن واستجابة فورية)
         $quickResult = $this->matchQuickPattern($cleanedMessage);
         if ($quickResult !== null) {
             return $quickResult;
         }
 
-        // 2. فحص التحيات والمجاملات وتوجيهها فوراً لدليل المساعدة (0 توكن)
+        // 2. فحص التحيات والمجاملات وتوجيهها لدليل التعليمات (0 توكن)
         if ($this->isGreeting($cleanedMessage)) {
             return [
                 'intent'     => 'help_menu',
@@ -66,12 +73,12 @@ class IntentParsingService
             ];
         }
 
-        // 3. الاستعانة بالذكاء الاصطناعي فقط للطلبات الديناميكية المتبقية
+        // 3. الاستعانة بالذكاء الاصطناعي للاستعلامات المعقدة والبحث بالأسماء
         return $this->executeAiInference($cleanedMessage);
     }
 
     /**
-     * فحص ما إذا كانت الرسالة مجرد تحية عامة
+     * فحص التحيات والمجاملات العامة
      */
     protected function isGreeting(string $text): bool
     {
@@ -150,7 +157,7 @@ class IntentParsingService
     }
 
     /**
-     * موجه نظام ثابت ومكثف لدعم الـ Cache وتقليل التوكن
+     * موجه نظام ثابت ومكثف 100% لتحقيق أقصى نسبة Cache Hit وتوفير التوكن
      */
     protected function getStaticSystemPrompt(): string
     {
@@ -177,9 +184,10 @@ Rules:
 1. Strip query words (رصيد, سعر, حساب, كم, كشف, توفر) from item_name/party_name.
 2. In sales/expenses: set period (today, yesterday, this_week, last_week, this_month, last_month). If relative periodic, date=null.
 3. If explicit date given, parse to YYYY-MM-DD.
-4. Set party_type=supplier if context mentions purchase/supplier, customer for sales/client, else all.
-5. If user asks for instructions, commands or help, return intent=help_menu.
-6. Return JSON only. No explanations.
+4. "ديون العملاء", "ارصدة العملاء", "كبار العملاء" -> intent: "top_debtors".
+5. "مستحقات الموردين", "ديون الموردين", "ارصدة الموردين" -> intent: "top_creditors".
+6. If user asks for instructions, commands or help, return intent=help_menu.
+7. Return JSON only. No explanations.
 PROMPT;
     }
 
