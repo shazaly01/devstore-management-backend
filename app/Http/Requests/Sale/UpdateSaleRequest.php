@@ -14,11 +14,12 @@ class UpdateSaleRequest extends FormRequest
     public function authorize(): bool
     {
         $sale = $this->route('sale');
+
         return $sale && $this->user()->can('update', $sale);
     }
 
     /**
-     * قواعد التحقق الصارمة لتحديث رأس وسطور المبيعات
+     * قواعد التحقق لتحديث رأس وسطور المبيعات
      */
     public function rules(): array
     {
@@ -32,16 +33,19 @@ class UpdateSaleRequest extends FormRequest
             ],
             'store_id'           => ['required', 'exists:stores,id'],
 
-            // حقن واشتراط الخزنة ماليّاً فقط في حال كان الدفع نقداً
+            // الفاتورة القديمة: تعتمد شروط الخزينة والبنك على payment_type.
+            // الفاتورة الجديدة المرسلة بمبالغ منفصلة: تعتمد الشروط على المبلغ المستخدم فعلياً.
             'treasury_id'        => [
-                Rule::requiredIf($this->payment_type === 'cash'),
+                Rule::requiredIf(fn () => $this->usesSplitPaymentAmounts()
+                    ? $this->paymentAmountIsPositive('cash_amount')
+                    : $this->payment_type === 'cash'),
                 'nullable',
                 'exists:treasuries,id'
             ],
-
-            // حقن واشتراط الحساب البنكي ماليّاً فقط في حال كان الدفع شبكة
             'bank_id'            => [
-                Rule::requiredIf($this->payment_type === 'card'),
+                Rule::requiredIf(fn () => $this->usesSplitPaymentAmounts()
+                    ? $this->paymentAmountIsPositive('bank_amount')
+                    : $this->payment_type === 'card'),
                 'nullable',
                 'exists:banks,id'
             ],
@@ -49,36 +53,40 @@ class UpdateSaleRequest extends FormRequest
             'customer_id'        => ['required', 'exists:customers,id'],
             'invoice_date'       => ['required', 'date'],
 
-            // تحديث طريقة الدفع لتقبل نوع الشبكة/الدفع الإلكتروني (card)
+            // تُبقى طريقة الدفع لأجل التوافق مع الفواتير والطلبات القديمة.
             'payment_type'       => ['required', Rule::in(['cash', 'card', 'credit'])],
+
+            // مبلغَا الدفع اختياريان لقبول الطلبات القديمة التي لا ترسلهما.
+            'cash_amount'        => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'bank_amount'        => ['sometimes', 'nullable', 'numeric', 'min:0'],
 
             'subtotal'           => ['required', 'numeric', 'min:0'],
             'discount_amount'    => ['nullable', 'numeric', 'min:0'],
             'tax_amount'         => ['nullable', 'numeric', 'min:0'],
             'grand_total'        => ['required', 'numeric', 'min:0'],
             'notes'              => ['nullable', 'string', 'max:1000'],
-                'customer_name_text' => ['nullable', 'string', 'max:255'],
+            'customer_name_text' => ['nullable', 'string', 'max:255'],
 
-            // بيانات المصمم للتتبع الإداري
-
-            // --- قواعد مصفوفة السطور (Items) المحدثة لنظام مبيعات عادي ---
+            // --- قواعد مصفوفة السطور ---
             'items'                    => ['required', 'array', 'min:1'],
             'items.*.item_id'          => ['required', 'exists:items,id'],
             'items.*.item_unit_id'     => ['required', 'exists:item_units,id'],
             'items.*.quantity'         => ['required', 'numeric', 'gt:0'],
             'items.*.unit_price'       => ['required', 'numeric', 'min:0'],
-            'items.*.subtotal'         => ['required', 'numeric', 'min:0'],
+            'items.*.subtotal'          => ['required', 'numeric', 'min:0'],
             'items.*.discount_amount'  => ['nullable', 'numeric', 'min:0'],
             'items.*.grand_total'      => ['required', 'numeric', 'min:0'],
         ];
     }
 
     /**
-     * التحقق المتقدم لمنع التلاعب بالكميات أثناء التحديث مع استثناء المستند الحالي من الاحتساب التراكمي للمرتجع
+     * التحقق المتقدم من كميات المرتجعات ومجموع مبالغ الدفع.
      */
     public function withValidator($validator): void
     {
         $validator->after(function ($validator) {
+            $this->validatePaymentSplit($validator);
+
             $items = $this->input('items', []);
             if (empty($items) || !is_array($items)) {
                 return;
@@ -88,12 +96,12 @@ class UpdateSaleRequest extends FormRequest
             $invoiceType = $this->input('invoice_type');
             $currentSale = $this->route('sale');
 
-            // الرقابة الصارمة أثناء التعديل
+            // الرقابة الصارمة أثناء تعديل مستند المرتجع
             if ($invoiceType === 'return' && $parentId && $currentSale) {
                 $parentSale = Sale::with('items')->find($parentId);
 
                 if ($parentSale) {
-                    // جلب المرتجعات السابقة مع استبعاد المرتجع الحالي تماماً من الحساب لتجنب تكرار الكميات
+                    // جلب المرتجعات السابقة مع استبعاد المرتجع الحالي من الحساب
                     $previousReturns = Sale::where('parent_id', $parentId)
                         ->where('invoice_type', 'return')
                         ->where('id', '!=', $currentSale->id)
@@ -109,10 +117,10 @@ class UpdateSaleRequest extends FormRequest
                                 'quantity' => 0.00,
                             ];
                         }
-                        $originalTotals[$key]['quantity'] += (float)$pItem->quantity;
+                        $originalTotals[$key]['quantity'] += (float) $pItem->quantity;
                     }
 
-                    // تجميع إجمالي ما تم إرجاعه مسبقاً في المستندات الأخرى فقط
+                    // تجميع إجمالي ما تم إرجاعه في المرتجعات الأخرى فقط
                     $returnedTotals = [];
                     foreach ($previousReturns as $prevReturn) {
                         foreach ($prevReturn->items as $rItem) {
@@ -122,34 +130,92 @@ class UpdateSaleRequest extends FormRequest
                                     'quantity' => 0.00,
                                 ];
                             }
-                            $returnedTotals[$key]['quantity'] += (float)$rItem->quantity;
+                            $returnedTotals[$key]['quantity'] += (float) $rItem->quantity;
                         }
                     }
 
-                    // مطابقة كميات التعديل الحالي ومقارنتها بالمتبقي الفعلي المتاح
+                    // مقارنة كميات المرتجع الحالي بالكمية المتبقية القابلة للإرجاع
                     foreach ($items as $index => $item) {
                         $itemId = $item['item_id'] ?? null;
                         $itemUnitId = $item['item_unit_id'] ?? null;
                         $key = $itemId . '-' . $itemUnitId;
 
-                        // التحقق من أن الصنف تم شراؤه بالفعل في الفاتورة الأصلية
+                        // التحقق من أن الصنف موجود في الفاتورة الأصلية
                         if (!isset($originalTotals[$key])) {
-                            $validator->errors()->add("items.{$index}.item_id", "هذا الصنف غير موجود في سطور فاتورة المبيعات الأصلية المرجعية.");
+                            $validator->errors()->add(
+                                "items.{$index}.item_id",
+                                'هذا الصنف غير موجود في سطور فاتورة المبيعات الأصلية المرجعية.'
+                            );
                             continue;
                         }
 
                         $origQty = $originalTotals[$key]['quantity'];
                         $prevQty = $returnedTotals[$key]['quantity'] ?? 0.00;
-                        $currentQty = (float)($item['quantity'] ?? 0.00);
+                        $currentQty = (float) ($item['quantity'] ?? 0.00);
 
                         $availableQty = $origQty - $prevQty;
                         if ($currentQty > $availableQty) {
-                            $validator->errors()->add("items.{$index}.quantity", "الكمية المحدثة الحالية ({$currentQty}) تتجاوز الكمية المتبقية القابلة للإرجاع في الفاتورة الأصلية ({$availableQty}).");
+                            $validator->errors()->add(
+                                "items.{$index}.quantity",
+                                "الكمية المحدثة الحالية ({$currentQty}) تتجاوز الكمية المتبقية القابلة للإرجاع في الفاتورة الأصلية ({$availableQty})."
+                            );
                         }
                     }
                 }
             }
         });
+    }
+
+    /**
+     * يحدد ما إذا كان الطلب يرسل مبالغ منفصلة لفاتورة بيع.
+     */
+    protected function usesSplitPaymentAmounts(): bool
+    {
+        return $this->input('invoice_type') === 'sale'
+            && ($this->has('cash_amount') || $this->has('bank_amount'));
+    }
+
+    /**
+     * يحدد ما إذا كانت قيمة مبلغ الدفع الممرر أكبر من صفر.
+     */
+    protected function paymentAmountIsPositive(string $field): bool
+    {
+        $amount = $this->input($field);
+
+        return is_numeric($amount) && (float) $amount > 0;
+    }
+
+    /**
+     * يمنع أن يتجاوز مجموع النقد والبنك إجمالي فاتورة البيع.
+     */
+    protected function validatePaymentSplit($validator): void
+    {
+        if (!$this->usesSplitPaymentAmounts()) {
+            return;
+        }
+
+        $cashInput = $this->input('cash_amount');
+        $bankInput = $this->input('bank_amount');
+        $grandTotalInput = $this->input('grand_total');
+
+        // قواعد الحقول الأساسية تتولى إظهار أخطاء القيم غير الرقمية.
+        if (($cashInput !== null && !is_numeric($cashInput))
+            || ($bankInput !== null && !is_numeric($bankInput))
+            || !is_numeric($grandTotalInput)) {
+            return;
+        }
+
+        // القيمة الفارغة أو غير المرسلة تعامل كمبلغ صفر.
+        $cashAmount = $cashInput === null ? 0.0 : (float) $cashInput;
+        $bankAmount = $bankInput === null ? 0.0 : (float) $bankInput;
+        $grandTotal = (float) $grandTotalInput;
+
+        if (round($cashAmount + $bankAmount - $grandTotal, 2) > 0) {
+            $validator->errors()->add(
+                'bank_amount',
+                'مجموع المبلغ النقدي والبنكي لا يجوز أن يتجاوز إجمالي الفاتورة.'
+            );
+        }
     }
 
     /**
@@ -163,6 +229,8 @@ class UpdateSaleRequest extends FormRequest
             'store_id'                => 'المخزن',
             'treasury_id'             => 'الخزنة المالية المستلمة',
             'bank_id'                 => 'الحساب البنكي المستلم',
+            'cash_amount'             => 'المبلغ النقدي المدفوع',
+            'bank_amount'             => 'المبلغ البنكي المدفوع',
             'customer_id'             => 'حساب العميل',
             'invoice_date'            => 'تاريخ الفاتورة',
             'payment_type'            => 'طريقة الدفع',
@@ -172,7 +240,7 @@ class UpdateSaleRequest extends FormRequest
             'items.*.item_unit_id'    => 'وحدة الصنف',
             'items.*.quantity'        => 'الكمية المباعة',
             'items.*.unit_price'      => 'سعر البيع للوحدة',
-            'items.*.price_type' => 'نوع السعر المختار',
+            'items.*.price_type'      => 'نوع السعر المختار',
             'items.*.grand_total'     => 'إجمالي السطر',
             'sale_type'               => 'نوع حركة البيع (داخلي / خارجي)',
             'customer_name_text'      => 'اسم العميل الخارجي (النصي)',

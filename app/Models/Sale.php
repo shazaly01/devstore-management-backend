@@ -26,6 +26,8 @@ class Sale extends Model
         'store_id',
         'treasury_id',
         'bank_id',
+        'cash_amount',
+        'bank_amount',
         'customer_id',
         'user_id',
         'designer_id', // [إضافة]: معرف المصمم المسؤول ماليّاً
@@ -51,6 +53,8 @@ class Sale extends Model
         'discount_amount'      => 'float',
         'tax_amount'           => 'float',
         'grand_total'          => 'float',
+        'cash_amount'          => 'decimal:2',
+        'bank_amount'          => 'decimal:2',
         'designer_id'          => 'integer',
         'designer_meter_price' => 'float',
         'design_commission'    => 'float',
@@ -58,23 +62,23 @@ class Sale extends Model
         'sale_type'            => 'string',
     ];
 
-  protected static function boot()
-{
-    parent::boot();
+    protected static function boot()
+    {
+        parent::boot();
 
-    static::creating(function ($sale) {
-        // التغيير الجوهري: استخدام withTrashed() لتشمل الفواتير المحذوفة ناعماً
-        $lastSequence = self::withTrashed()
-            ->where('invoice_type', $sale->invoice_type)
-            ->max('invoice_sequence');
+        static::creating(function ($sale) {
+            // استخدام withTrashed() لتشمل الفواتير المحذوفة ناعماً
+            $lastSequence = self::withTrashed()
+                ->where('invoice_type', $sale->invoice_type)
+                ->max('invoice_sequence');
 
-        $nextSequence = $lastSequence ? $lastSequence + 1 : 1;
-        $sale->invoice_sequence = $nextSequence;
+            $nextSequence = $lastSequence ? $lastSequence + 1 : 1;
+            $sale->invoice_sequence = $nextSequence;
 
-        $prefix = $sale->invoice_type === 'sale' ? 'INV-' : 'SR-';
-        $sale->invoice_number = $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
-    });
-}
+            $prefix = $sale->invoice_type === 'sale' ? 'INV-' : 'SR-';
+            $sale->invoice_number = $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
+        });
+    }
 
     public function parentInvoice(): BelongsTo
     {
@@ -117,7 +121,7 @@ class Sale extends Model
     }
 
     /**
-     * [ارتباط معماري جديد]: ربط الفاتورة بالمصمم المسؤول من جدول المستخدمين
+     * ربط الفاتورة بالمصمم المسؤول من جدول المستخدمين
      */
     public function designer(): BelongsTo
     {
@@ -128,7 +132,6 @@ class Sale extends Model
     {
         return $this->belongsTo(JournalEntry::class, 'journal_entry_id');
     }
-
 
     /**
      * فلترة الفواتير ديناميكياً حسب النوع (indoor / outdoor)

@@ -65,7 +65,7 @@ class SaleService
             $query->whereDate('invoice_date', '<=', $filters['to_date']);
         }
 
-        return $query->latest('invoice_date')->paginate($perPage);
+        return $query->orderByDesc('created_at')->orderByDesc('id')->paginate($perPage);
     }
 
 /**
@@ -177,13 +177,10 @@ public function createSale(array $data, int $userId): Sale
            // 1. إعادة ترصيد المخزون القديم لحساب الرصيد الحقيقي قبل التحقق
            $this->stockService->clearDocumentMovements($sale->invoice_number);
 
-           if ($sale->journal_entry_id) {
-               $oldEntry = JournalEntry::find($sale->journal_entry_id);
-               if ($oldEntry) {
-                   $this->journalService->deleteEntry($oldEntry);
-                   $oldEntry->forceDelete();
-               }
-           }
+           // الاحتفاظ بالقيد الحالي لتحديث أسطره بدلاً من حذف رأسه وإنشاء قيد جديد
+           $existingEntry = $sale->journal_entry_id
+               ? JournalEntry::with('lines')->find($sale->journal_entry_id)
+               : null;
 
            $items = $data['items'];
            $targetStoreId = (int) ($data['store_id'] ?? $sale->store_id);
@@ -272,7 +269,7 @@ public function createSale(array $data, int $userId): Sale
                }
            }
 
-           $newEntry = $this->generateJournalEntry($sale);
+           $newEntry = $this->generateJournalEntry($sale, $existingEntry);
            $sale->update(['journal_entry_id' => $newEntry->id]);
 
            return $sale->load('items.itemUnit.unit');
@@ -301,7 +298,7 @@ public function createSale(array $data, int $userId): Sale
     /**
      * توليد القيد المحاسبي المزدوج وتصعيد حساب تكلفة المكونات المباعة بدقة
      */
-    private function generateJournalEntry(Sale $sale): JournalEntry
+    private function generateJournalEntry(Sale $sale, ?JournalEntry $existingEntry = null): JournalEntry
     {
         $lines = [];
 
@@ -344,30 +341,48 @@ public function createSale(array $data, int $userId): Sale
         }
 
         if ($sale->invoice_type === 'sale') {
-            if ($sale->payment_type === 'cash') {
+            $invoiceTotal = (float) $sale->grand_total;
+
+            // القيم غير الفارغة تعني أن الفاتورة تستخدم توزيع الدفع الجديد.
+            // القيم null تعني فاتورة قديمة، فتُفسر وفق payment_type المسجل سابقاً.
+            if ($sale->cash_amount !== null || $sale->bank_amount !== null) {
+                $cashAmount = round((float) ($sale->cash_amount ?? 0), 2);
+                $bankAmount = round((float) ($sale->bank_amount ?? 0), 2);
+                $customerAmount = round(max(0.0, $invoiceTotal - $cashAmount - $bankAmount), 2);
+            } else {
+                $cashAmount = $sale->payment_type === 'cash' ? $invoiceTotal : 0.0;
+                $bankAmount = $sale->payment_type === 'card' ? $invoiceTotal : 0.0;
+                $customerAmount = $sale->payment_type === 'credit' ? $invoiceTotal : 0.0;
+            }
+
+            if ($cashAmount > 0) {
                 $lines[] = [
                     'account_id'      => $treasuryAccount->id,
                     'sub_ledger_type' => Treasury::class,
                     'sub_ledger_id'   => $sale->treasury_id,
-                    'debit'           => $sale->grand_total,
+                    'debit'           => $cashAmount,
                     'credit'          => 0.00,
                     'line_notes'      => 'تحصيل نقدي لقيمة مبيعات بموجب فاتورة رقم: ' . $sale->invoice_number,
                 ];
-            } elseif ($sale->payment_type === 'card') {
+            }
+
+            if ($bankAmount > 0) {
                 $lines[] = [
                     'account_id'      => $bankAccount->id,
                     'sub_ledger_type' => Bank::class,
                     'sub_ledger_id'   => $sale->bank_id,
-                    'debit'           => $sale->grand_total,
+                    'debit'           => $bankAmount,
                     'credit'          => 0.00,
                     'line_notes'      => 'تحصيل بنكي/شبكة لقيمة مبيعات بموجب فاتورة رقم: ' . $sale->invoice_number,
                 ];
-            } else {
+            }
+
+            if ($customerAmount > 0) {
                 $lines[] = [
                     'account_id'      => $customerAccount->id,
                     'sub_ledger_type' => Customer::class,
                     'sub_ledger_id'   => $sale->customer_id,
-                    'debit'           => $sale->grand_total,
+                    'debit'           => $customerAmount,
                     'credit'          => 0.00,
                     'line_notes'      => 'مديونية عميل بموجب فاتورة مبيعات رقم: ' . $sale->invoice_number,
                 ];
@@ -459,14 +474,20 @@ public function createSale(array $data, int $userId): Sale
             }
         }
 
-        return $this->journalService->createEntry([
+        $entryData = [
             'entry_number' => $sale->invoice_number,
             'entry_date'   => Carbon::parse($sale->invoice_date)->format('Y-m-d'),
             'type'         => 'journal',
             'notes'        => $sale->notes ?? 'قيد تلقائي مزدوج ناتج عن حركة مبيعات كاشير المحدثة',
             'user_id'      => $sale->user_id,
             'lines'        => $lines
-        ]);
+        ];
+
+        if ($existingEntry) {
+            return $this->journalService->updateEntry($existingEntry, $entryData, true);
+        }
+
+        return $this->journalService->createEntry($entryData);
     }
 
     /**

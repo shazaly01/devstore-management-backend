@@ -177,6 +177,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // أ. تقارير المخازن والمستودعات اللوجستية التفصيلية
         Route::get('inventory/current-stock', [InventoryReportController::class, 'currentStock']);
+        Route::get('inventory/stock-card/items', [InventoryReportController::class, 'searchStockCardItems']);
         Route::get('inventory/stock-card', [InventoryReportController::class, 'stockCard']);
         Route::get('inventory/valuation', [InventoryReportController::class, 'stockValuation']);
         Route::get('inventory/adjustments-summary', [InventoryReportController::class, 'adjustmentsSummary']);

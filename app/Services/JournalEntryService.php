@@ -43,12 +43,24 @@ class JournalEntryService
                     'sub_ledger_id'   => $line['sub_ledger_id'] ?? null,
                 ]);
 
-                // حساب الأثر المالي للحساب العام وتصعيده في الشجرة بشكل محاسبي ذكي
-                $this->calculateNetEffect($line['account_id'], $line['debit'], $line['credit'], $accountChanges, $allAccounts);
+                // حساب الأثر المالي للحساب العام وتصعيده في الشجرة
+                $this->calculateNetEffect(
+                    $line['account_id'],
+                    $line['debit'],
+                    $line['credit'],
+                    $accountChanges,
+                    $allAccounts
+                );
 
                 // حساب الأثر المالي للحساب المساعد (إن وجد)
                 if (!empty($line['sub_ledger_type']) && !empty($line['sub_ledger_id'])) {
-                    $this->calculateSubLedgerEffect($line['sub_ledger_type'], $line['sub_ledger_id'], $line['debit'], $line['credit'], $subLedgerChanges);
+                    $this->calculateSubLedgerEffect(
+                        $line['sub_ledger_type'],
+                        $line['sub_ledger_id'],
+                        $line['debit'],
+                        $line['credit'],
+                        $subLedgerChanges
+                    );
                 }
             }
 
@@ -61,11 +73,21 @@ class JournalEntryService
     }
 
     /**
-     * تعديل قيد مالي مطور مع معالجة حقول الأرصدة الافتتاحية والحالية عند التراجع وإعادة البناء
+     * تعديل قيد مالي مع معالجة أثر الأسطر القديمة والجديدة على الأرصدة.
+     *
+     * يسمح الخيار $allowHistoricalUpdate لمسار تعديل فاتورة البيع بتحديث قيد
+     * قديم التاريخ. يبقى المنع مفعلاً افتراضياً لبقية أنواع تعديل القيود.
      */
-    public function updateEntry(JournalEntry $journalEntry, array $data): JournalEntry
-    {
-        if ($journalEntry->type !== 'opening_balance' && !Carbon::parse($journalEntry->entry_date)->isSameDay(Carbon::now())) {
+    public function updateEntry(
+        JournalEntry $journalEntry,
+        array $data,
+        bool $allowHistoricalUpdate = false
+    ): JournalEntry {
+        if (
+            !$allowHistoricalUpdate
+            && $journalEntry->type !== 'opening_balance'
+            && !Carbon::parse($journalEntry->entry_date)->isSameDay(Carbon::now())
+        ) {
             throw new Exception('لا يمكن تعديل القيود أو السندات المالية العائدة لأيام سابقة مباشرة. يرجى إلغاؤها بقيد عكسي.');
         }
 
@@ -76,23 +98,35 @@ class JournalEntryService
 
             // 1. مسح الأثر المالي القديم كاملاً عبر عكس القيم
             foreach ($journalEntry->lines as $oldLine) {
-                $this->calculateNetEffect($oldLine->account_id, -$oldLine->debit, -$oldLine->credit, $accountChanges, $allAccounts);
+                $this->calculateNetEffect(
+                    $oldLine->account_id,
+                    -$oldLine->debit,
+                    -$oldLine->credit,
+                    $accountChanges,
+                    $allAccounts
+                );
 
                 if (!empty($oldLine->sub_ledger_type) && !empty($oldLine->sub_ledger_id)) {
-                    $this->calculateSubLedgerEffect($oldLine->sub_ledger_type, $oldLine->sub_ledger_id, -$oldLine->debit, -$oldLine->credit, $subLedgerChanges);
+                    $this->calculateSubLedgerEffect(
+                        $oldLine->sub_ledger_type,
+                        $oldLine->sub_ledger_id,
+                        -$oldLine->debit,
+                        -$oldLine->credit,
+                        $subLedgerChanges
+                    );
                 }
             }
 
-            // التراجع عن الأثر المالي القديم في الجداول المساعدة بناءً على نوع القيد الأصلي
+            // التراجع عن الأثر المالي القديم في الجداول المساعدة حسب نوع القيد الأصلي
             $this->applySubLedgerChanges($subLedgerChanges, $journalEntry->type);
 
-            // تصفير مصفوفة الحسابات المساعدة لاستقبال القيم الجديدة بأمان دون تداخل
+            // تصفير التغييرات المساعدة لاستقبال أثر الأسطر الجديدة
             $subLedgerChanges = [];
 
             // 2. حذف أسطر القيد القديمة فيزيائياً من قاعدة البيانات
             $journalEntry->lines()->forceDelete();
 
-            // 3. تحديث بيانات رأس القيد/السند
+            // 3. تحديث بيانات رأس القيد/السند مع الإبقاء على السجل ورقمه
             $journalEntry->update([
                 'entry_number' => $data['entry_number'],
                 'entry_date'   => $data['entry_date'],
@@ -111,14 +145,26 @@ class JournalEntryService
                     'sub_ledger_id'   => $newLine['sub_ledger_id'] ?? null,
                 ]);
 
-                $this->calculateNetEffect($newLine['account_id'], $newLine['debit'], $newLine['credit'], $accountChanges, $allAccounts);
+                $this->calculateNetEffect(
+                    $newLine['account_id'],
+                    $newLine['debit'],
+                    $newLine['credit'],
+                    $accountChanges,
+                    $allAccounts
+                );
 
                 if (!empty($newLine['sub_ledger_type']) && !empty($newLine['sub_ledger_id'])) {
-                    $this->calculateSubLedgerEffect($newLine['sub_ledger_type'], $newLine['sub_ledger_id'], $newLine['debit'], $newLine['credit'], $subLedgerChanges);
+                    $this->calculateSubLedgerEffect(
+                        $newLine['sub_ledger_type'],
+                        $newLine['sub_ledger_id'],
+                        $newLine['debit'],
+                        $newLine['credit'],
+                        $subLedgerChanges
+                    );
                 }
             }
 
-            // 5. تطبيق الصافي النهائي للتحديثات في قاعدة البيانات
+            // 5. تطبيق صافي تحديثات الحسابات والأثر الجديد للدفاتر المساعدة
             $this->applyAccountChanges($accountChanges);
             $this->applySubLedgerChanges($subLedgerChanges, $data['type']);
 
@@ -138,10 +184,22 @@ class JournalEntryService
 
             // 1. التراجع وعكس الأثر المالي لجميع الأسطر قبل الحذف
             foreach ($journalEntry->lines as $line) {
-                $this->calculateNetEffect($line->account_id, -$line->debit, -$line->credit, $accountChanges, $allAccounts);
+                $this->calculateNetEffect(
+                    $line->account_id,
+                    -$line->debit,
+                    -$line->credit,
+                    $accountChanges,
+                    $allAccounts
+                );
 
                 if (!empty($line->sub_ledger_type) && !empty($line->sub_ledger_id)) {
-                    $this->calculateSubLedgerEffect($line->sub_ledger_type, $line->sub_ledger_id, -$line->debit, -$line->credit, $subLedgerChanges);
+                    $this->calculateSubLedgerEffect(
+                        $line->sub_ledger_type,
+                        $line->sub_ledger_id,
+                        -$line->debit,
+                        -$line->credit,
+                        $subLedgerChanges
+                    );
                 }
             }
 
@@ -161,15 +219,22 @@ class JournalEntryService
     }
 
     /**
-     * حساب الأثر المالي وتصعيده شجرياً بدقة متناهية (تغطية الحسابات العكسية Contra-Accounts)
+     * حساب الأثر المالي وتصعيده شجرياً مع تغطية الحسابات العكسية
      */
-    private function calculateNetEffect(int $accountId, float $debit, float $credit, array &$changes, \Illuminate\Support\Collection $allAccounts): void
-    {
+    private function calculateNetEffect(
+        int $accountId,
+        float $debit,
+        float $credit,
+        array &$changes,
+        \Illuminate\Support\Collection $allAccounts
+    ): void {
         $currentId = $accountId;
 
         while ($currentId) {
             $account = $allAccounts->get($currentId);
-            if (!$account) break;
+            if (!$account) {
+                break;
+            }
 
             if ($account->nature === 'debit') {
                 $nodeEffect = $debit - $credit;
@@ -187,10 +252,15 @@ class JournalEntryService
     }
 
     /**
-     * حساب وتجميع الأثر المالي المباشر في الذاكرة للدفاتر المساعدة (Sub-Ledgers)
+     * حساب وتجميع الأثر المالي المباشر في الذاكرة للدفاتر المساعدة
      */
-    private function calculateSubLedgerEffect(string $type, int $id, float $debit, float $credit, array &$subChanges): void
-    {
+    private function calculateSubLedgerEffect(
+        string $type,
+        int $id,
+        float $debit,
+        float $credit,
+        array &$subChanges
+    ): void {
         if (str_contains(strtolower($type), 'supplier')) {
             $netEffect = $credit - $debit;
         } else {
@@ -211,7 +281,7 @@ class JournalEntryService
     }
 
     /**
-     * تحديث أرصدة شجرة الحسابات العامة دفعة واحدة بطريقة تمنع الـ Deadlock
+     * تحديث أرصدة شجرة الحسابات العامة دفعة واحدة بطريقة تمنع التعارض
      */
     private function applyAccountChanges(array $changes): void
     {
@@ -232,7 +302,7 @@ class JournalEntryService
     }
 
     /**
-     * تحديث أرصدة الجداول المساعدة (نسخة معمارية نقية معزولة تعتمد على الـ FQCN الموثوق مباشرة)
+     * تحديث أرصدة الجداول المساعدة بالاعتماد على اسم الكلاس الكامل الموثوق
      */
     private function applySubLedgerChanges(array $subChanges, string $entryType): void
     {
@@ -243,7 +313,7 @@ class JournalEntryService
                 continue;
             }
 
-            // الكลาส يأتي صريحاً ومطابقاً بنسبة 100% من قاعدة البيانات وبوابة التحقق بدون حاجة لـ match يدوي
+            // الكلاس يأتي صريحاً ومطابقاً للقيمة المخزنة في قاعدة البيانات
             $modelClass = $change['type'];
 
             if (class_exists($modelClass)) {

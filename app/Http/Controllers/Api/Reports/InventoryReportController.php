@@ -205,6 +205,39 @@ class InventoryReportController extends Controller
     }
 
     /**
+     * البحث الخادمي المحدود عن أصناف تقرير بطاقة الحركة.
+     * لا يتطلب تحديد مستودع، ولا يحمل كامل قائمة الأصناف.
+     */
+    public function searchStockCardItems(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'search' => ['required', 'string', 'min:2', 'max:100'],
+        ]);
+
+        $search = trim($validated['search']);
+
+        $items = Item::query()
+            ->select(['id', 'name'])
+            ->where('item_type', 'product')
+            ->where(function ($query) use ($search) {
+                $query->where('name', 'like', "%{$search}%")
+                    ->orWhereHas('barcodes', function ($barcodeQuery) use ($search) {
+                        // الحفاظ على سلوك البحث الحالي: مطابقة الباركود بالكامل.
+                        $barcodeQuery->where('barcode', $search);
+                    });
+            })
+            ->orderBy('name')
+            ->orderBy('id')
+            ->limit(20)
+            ->get();
+
+        return response()->json([
+            'success' => true,
+            'data' => $items,
+        ]);
+    }
+
+    /**
      * 3. تقرير تقييم المخزون المالي (Inventory Valuation Report)
      */
     public function stockValuation(Request $request): JsonResponse
