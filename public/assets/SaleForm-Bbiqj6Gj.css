@@ -1,0 +1,1 @@
+.dark input[type=date]::-webkit-calendar-picker-indicator{filter:invert(1)}input[type=date][data-v-fd93c4f9]::-webkit-calendar-picker-indicator{cursor:pointer;opacity:.6}.animate-fade-in[data-v-fd93c4f9]{animation:fadeIn-fd93c4f9 .2s ease-out forwards}@keyframes fadeIn-fd93c4f9{0%{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}

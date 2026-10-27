@@ -22,6 +22,42 @@ class OnlineBackupService
     }
 
     /**
+     * كشف ذكي لمسار أدوات MySQL:
+     * - في بيئة العميل المحمولة (Windows Portable): يكتشف مجلد bin المحلي تلقائياً
+     * - في بيئة السيرفر (Linux / Online): يُرجع null ليعتمد على أدوات النظام القياسية دون تعديل
+     */
+    protected function getBinaryPath(): ?string
+    {
+        if (env('MYSQL_BINARY_PATH')) {
+            return env('MYSQL_BINARY_PATH');
+        }
+
+        // المسار النسبي لخادم MySQL المحمول بالنسبة لمجلد Laravel
+        $portablePath = base_path('..' . DIRECTORY_SEPARATOR . 'server' . DIRECTORY_SEPARATOR . 'mysql' . DIRECTORY_SEPARATOR . 'bin');
+        if (File::isDirectory($portablePath)) {
+            return realpath($portablePath);
+        }
+
+        return null;
+    }
+
+    /**
+     * جلب المسار التنفيذي لأداة mysql للاستيراد
+     */
+    protected function getMysqlExecutable(): string
+    {
+        $binPath = $this->getBinaryPath();
+        if ($binPath) {
+            $exe = $binPath . DIRECTORY_SEPARATOR . (PHP_OS_FAMILY === 'Windows' ? 'mysql.exe' : 'mysql');
+            if (File::exists($exe)) {
+                return $exe;
+            }
+        }
+
+        return 'mysql';
+    }
+
+    /**
      * جلب اسم قاعدة البيانات الحالية ديناميكياً من الإعدادات
      */
     protected function getDatabaseName(): string
@@ -69,16 +105,22 @@ class OnlineBackupService
         $tempSqlFile = $this->tempPath . DIRECTORY_SEPARATOR . "temp_dump_{$timestamp}.sql";
 
         try {
-            MySql::create()
+            $dumper = MySql::create()
                 ->setDbName($dbName)
                 ->setUserName($dbConfig['username'])
-                ->setPassword($dbConfig['password'])
+                ->setPassword($dbConfig['password'] ?? '')
                 ->setHost($dbConfig['host'] ?? '127.0.0.1')
                 ->setPort($dbConfig['port'] ?? 3306)
                 ->addExtraOption('--single-transaction') // منع قفل الجداول أثناء عمل موظفي الحسابات
                 ->addExtraOption('--skip-lock-tables')
-                ->addExtraOption('--quick') // سحب البيانات سطر بسطر لتقليل الضغط على الذاكرة
-                ->dumpToFile($tempSqlFile);
+                ->addExtraOption('--quick'); // سحب البيانات سطر بسطر لتقليل الضغط على الذاكرة
+
+            // تمرير مسار مجلد mysqldump.exe في حالة وجود السيرفر المحمول
+            if ($binPath = $this->getBinaryPath()) {
+                $dumper->setDumpBinaryPath($binPath);
+            }
+
+            $dumper->dumpToFile($tempSqlFile);
 
             // ضغط الملف يدوياً عبر PHP لضمان أقصى حماية واستقرار
             $this->gzipFile($tempSqlFile, $finalPath);
@@ -98,7 +140,7 @@ class OnlineBackupService
             if (File::exists($tempSqlFile)) {
                 File::delete($tempSqlFile);
             }
-            throw new Exception('فشل إنشاء النسخة الاحتياطية أونلاين: ' . $e->getMessage());
+            throw new Exception('فشل إنشاء النسخة الاحتياطية: ' . $e->getMessage());
         }
     }
 
@@ -237,7 +279,6 @@ class OnlineBackupService
         $prefix = "{$dbName}_";
 
         foreach ($files as $file) {
-            // التصفية بناءً على البادئة الديناميكية لمنع تداخل المشاريع
             if ($file->getExtension() === 'gz' && str_starts_with($file->getFilename(), $prefix)) {
                 $backupFiles[] = [
                     'path' => $file->getPathname(),
@@ -246,12 +287,10 @@ class OnlineBackupService
             }
         }
 
-        // الترتيب من الأحدث إلى الأقدم
         usort($backupFiles, function ($a, $b) {
             return $b['mtime'] <=> $a['mtime'];
         });
 
-        // إذا تجاوز العدد 50، نقوم بتدمير الزائد بدءاً من الأقدم
         if (count($backupFiles) > 50) {
             $filesToDelete = array_slice($backupFiles, 50);
             foreach ($filesToDelete as $file) {
@@ -265,21 +304,22 @@ class OnlineBackupService
      */
     protected function executeMysqlImport(array $dbConfig, string $filePath): void
     {
+        $mysqlBin = $this->getMysqlExecutable();
+
         $command = [
-            'mysql',
+            $mysqlBin,
             '-h', $dbConfig['host'] ?? '127.0.0.1',
-            '-P', $dbConfig['port'] ?? '3306',
-            '-u', $dbConfig['username'],
-            '--execute=source ' . $filePath, // استخدام الأمر الداخلي لـ MySQL لعدم فتح ثغرات حقن أو استهلاك الذاكرة
-            $dbConfig['database']
+            '-P', (string) ($dbConfig['port'] ?? 3306),
+            '-u', (string) $dbConfig['username'],
+            '--execute=source ' . $filePath,
+            (string) $dbConfig['database']
         ];
 
-        // نمرر كلمة المرور عبر البيئة لمنع ظهورها في قائمة العمليات النشطة للسيرفر
         $process = new Process($command, null, [
-            'MYSQL_PWD' => $dbConfig['password']
+            'MYSQL_PWD' => (string) ($dbConfig['password'] ?? '')
         ]);
 
-        $process->setTimeout(300); // إتاحة وقت كافي للاستيراد
+        $process->setTimeout(300);
         $process->run();
 
         if (!$process->isSuccessful()) {
@@ -303,14 +343,12 @@ class OnlineBackupService
         while (($line = fgets($file)) !== false) {
             $trimmedLine = trim($line);
 
-            // تجاهل التعليقات والسطور الفارغة لتسريع المعالجة
             if (empty($trimmedLine) || str_starts_with($trimmedLine, '--') || str_starts_with($trimmedLine, '/*')) {
                 continue;
             }
 
             $query .= $line;
 
-            // إذا انتهى السطر بفاصلة منقوطة، نقوم بتنفيذه وتحرير الذاكرة فوراً
             if (str_ends_with($trimmedLine, ';')) {
                 DB::unprepared($query);
                 $query = '';
@@ -348,7 +386,7 @@ class OnlineBackupService
      */
     protected function gzipFile(string $source, string $destination): void
     {
-        $fpOut = gzopen($destination, 'wb9'); // ضغط من الدرجة التاسعة (القصوى)
+        $fpOut = gzopen($destination, 'wb9');
         $fpIn = fopen($source, 'rb');
 
         if ($fpOut === false || $fpIn === false) {
@@ -356,7 +394,7 @@ class OnlineBackupService
         }
 
         while (!feof($fpIn)) {
-            gzwrite($fpOut, fread($fpIn, 1024 * 512)); // حزم بحجم 512 كيلوبايت لسلامة الذاكرة
+            gzwrite($fpOut, fread($fpIn, 1024 * 512));
         }
 
         fclose($fpIn);
@@ -379,8 +417,8 @@ class OnlineBackupService
             fwrite($fpOut, gzread($fpIn, 1024 * 512));
         }
 
-        fclose($fpOut);
-        gzclose($fpIn);
+        fclose($fpIn);
+        gzclose($fpOut);
     }
 
     /**
@@ -396,16 +434,21 @@ class OnlineBackupService
             File::makeDirectory($this->tempPath, 0755, true, true);
         }
 
-        MySql::create()
+        $dumper = MySql::create()
             ->setDbName($dbName)
             ->setUserName($dbConfig['username'])
-            ->setPassword($dbConfig['password'])
+            ->setPassword($dbConfig['password'] ?? '')
             ->setHost($dbConfig['host'] ?? '127.0.0.1')
             ->setPort($dbConfig['port'] ?? 3306)
             ->addExtraOption('--single-transaction')
             ->addExtraOption('--skip-lock-tables')
-            ->addExtraOption('--quick')
-            ->dumpToFile($tempSql);
+            ->addExtraOption('--quick');
+
+        if ($binPath = $this->getBinaryPath()) {
+            $dumper->setDumpBinaryPath($binPath);
+        }
+
+        $dumper->dumpToFile($tempSql);
 
         $this->gzipFile($tempSql, $emergencyFile);
         File::delete($tempSql);
@@ -437,7 +480,6 @@ class OnlineBackupService
             File::delete($tempEmergencySql);
             File::delete($emergencyFile);
         } catch (Exception $criticalError) {
-            // تسجيل الكارثة في نظام التقارير إذا خرج التراجع عن السيطرة
             logger()->critical("فشل حرج: تعذر استعادة نسخة الطوارئ التلقائية لقاعدة البيانات {$dbName} بعد فشل الاستعادة الأساسي! التفاصيل: " . $criticalError->getMessage());
         }
     }

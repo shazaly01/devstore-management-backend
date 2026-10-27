@@ -46,7 +46,7 @@ class FinancialReportController extends Controller
         $openingCredit = (float) $openingQuery->sum('credit');
         $openingBalance = $isDebitNature ? ($openingDebit - $openingCredit) : ($openingCredit - $openingDebit);
 
-        // ب: جلب الحركات الفخرية داخل النطاق الزمني
+        // ب: جلب الحركات داخل النطاق الزمني مع تأمين الحذف الناعم على رأس القيد
         $linesQuery = JournalEntryLine::with('journalEntry')
             ->where('account_id', $accountId)
             ->whereHas('journalEntry', function ($q) use ($fromDate, $toDate) {
@@ -54,21 +54,25 @@ class FinancialReportController extends Controller
                 if ($toDate) $q->where('entry_date', '<=', $toDate);
             });
 
-        // ترتيب الحركات تزامناً مع تاريخ القيد والمعرف لضمان سلامة التقرير
         $lines = $linesQuery->join('journal_entries', 'journal_entry_lines.journal_entry_id', '=', 'journal_entries.id')
+            ->whereNull('journal_entries.deleted_at')
             ->orderBy('journal_entries.entry_date', 'asc')
             ->orderBy('journal_entry_lines.id', 'asc')
             ->select('journal_entry_lines.*')
             ->get();
 
         $runningBalance = $openingBalance;
+        $totalPeriodDebit = 0.00;
+        $totalPeriodCredit = 0.00;
         $reportLines = [];
 
         foreach ($lines as $line) {
             $debit = (float) $line->debit;
             $credit = (float) $line->credit;
 
-            // تعديل الرصيد الجاري بناءً على طبيعة الحساب ميكانيكياً
+            $totalPeriodDebit += $debit;
+            $totalPeriodCredit += $credit;
+
             if ($isDebitNature) {
                 $runningBalance += ($debit - $credit);
             } else {
@@ -88,24 +92,28 @@ class FinancialReportController extends Controller
             ];
         }
 
+        $summaryData = [
+            'account_id'          => $account->id,
+            'account_name'        => $account->name,
+            'account_code'        => $account->code,
+            'nature'              => $isDebitNature ? 'debit' : 'credit',
+            'nature_lbl'          => $isDebitNature ? 'مدين' : 'دائن',
+            'opening_balance'     => round($openingBalance, 2),
+            'total_period_debit'  => round($totalPeriodDebit, 2),
+            'total_period_credit' => round($totalPeriodCredit, 2),
+            'closing_balance'     => round($runningBalance, 2),
+        ];
+
         return response()->json([
-            'success' => true,
-            'meta'    => [
-                'account_id'      => $account->id,
-                'account_name'    => $account->name,
-                'account_code'    => $account->code,
-                'nature'          => $isDebitNature ? 'debit' : 'credit',
-                'nature_lbl'      => $isDebitNature ? 'مدين' : 'دائن',
-                'opening_balance' => round($openingBalance, 2),
-                'closing_balance' => round($runningBalance, 2)
-            ],
-            'data'    => $reportLines
+            'success'      => true,
+            'data'         => $reportLines,
+            'grandSummary' => $summaryData,
+            'meta'         => $summaryData,
         ]);
     }
 
-/**
+    /**
      * 2. كشف حساب الكيانات المساعدة (Sub-Ledger Statement)
-     * نسخة معمارية مطورة ونظيفة تعتمد بالكامل على الكلاسات الكاملة وبأعلى كفاءة استعلامية
      */
     public function subLedgerStatement(Request $request): JsonResponse
     {
@@ -119,7 +127,6 @@ class FinancialReportController extends Controller
         $fromDate = $request->from_date ? Carbon::parse($request->from_date)->startOfDay() : null;
         $toDate = $request->to_date ? Carbon::parse($request->to_date)->endOfDay() : null;
 
-        // خريطة المطابقة لترجمة المعرف القادم من الواجهة إلى كلاس صريح ونظيف فوراً
         $typeMap = [
             'customer' => \App\Models\Customer::class,
             'client'   => \App\Models\Customer::class,
@@ -137,14 +144,12 @@ class FinancialReportController extends Controller
             $type = $typeMap[$normalizedType];
         }
 
-        // فحص طبيعة التعامل المحاسبي الحاسم بناءً على الكلاس الصريح
         $isDebitNature = in_array($type, [
             \App\Models\Customer::class,
             \App\Models\Bank::class,
             \App\Models\Treasury::class,
         ]);
 
-        // أ: احتساب الرصيد الافتتاحي ما قبل الفترة المحددة باستخدام الكلاس الصريح مباشرة
         if ($fromDate) {
             $openingQuery = JournalEntryLine::where('sub_ledger_type', $type)
                 ->where('sub_ledger_id', $id)
@@ -159,7 +164,6 @@ class FinancialReportController extends Controller
             $openingBalance = 0.00;
         }
 
-        // ب: جلب الحركات التفصيلية للكيان مع شحن العلاقات العكسية للمستندات في الذاكرة
         $linesQuery = JournalEntryLine::with([
             'journalEntry.lines.account',
             'account',
@@ -175,17 +179,23 @@ class FinancialReportController extends Controller
         });
 
         $lines = $linesQuery->join('journal_entries', 'journal_entry_lines.journal_entry_id', '=', 'journal_entries.id')
+            ->whereNull('journal_entries.deleted_at')
             ->orderBy('journal_entries.entry_date', 'asc')
             ->orderBy('journal_entry_lines.id', 'asc')
             ->select('journal_entry_lines.*')
             ->get();
 
         $runningBalance = $openingBalance;
+        $totalPeriodDebit = 0.00;
+        $totalPeriodCredit = 0.00;
         $reportLines = [];
 
         foreach ($lines as $line) {
             $debit = (float) $line->debit;
             $credit = (float) $line->credit;
+
+            $totalPeriodDebit += $debit;
+            $totalPeriodCredit += $credit;
 
             if ($isDebitNature) {
                 $runningBalance += ($debit - $credit);
@@ -193,7 +203,6 @@ class FinancialReportController extends Controller
                 $runningBalance += ($credit - $debit);
             }
 
-            // 1. استخراج الحساب المقابل الرئيسي بناءً على الفرز التشغيلي والوزن المالي
             $counterpartAccountName = null;
             if ($line->journalEntry && $line->journalEntry->lines) {
                 $isCurrentLineDebit = $debit > 0;
@@ -231,7 +240,6 @@ class FinancialReportController extends Controller
                 $counterpartAccountName = $line->account->name ?? null;
             }
 
-            // 2. طبقة التطهير الدلالي الحصينة واختصار الكلمات للواجهة
             if ($counterpartAccountName) {
                 $counterpartAccountName = trim($counterpartAccountName);
 
@@ -258,7 +266,6 @@ class FinancialReportController extends Controller
                 }
             }
 
-            // 3. هندسة كشف التأصيل المستندي العكسي
             $sourceType = null;
             $sourceId = null;
 
@@ -289,22 +296,25 @@ class FinancialReportController extends Controller
             ];
         }
 
+        $summaryData = [
+            'sub_ledger_type'     => strtolower(class_basename($type)),
+            'sub_ledger_id'       => (int) $id,
+            'opening_balance'     => round($openingBalance, 2),
+            'total_period_debit'  => round($totalPeriodDebit, 2),
+            'total_period_credit' => round($totalPeriodCredit, 2),
+            'closing_balance'     => round($runningBalance, 2),
+        ];
+
         return response()->json([
-            'success' => true,
-            'meta'    => [
-                // إرجاع الاسم الصغير للفرونت إند (مثل customer) ليتناسب مع بقية الموارد والـ Resources
-                'sub_ledger_type' => strtolower(class_basename($type)),
-                'sub_ledger_id'   => (int) $id,
-                'opening_balance' => round($openingBalance, 2),
-                'closing_balance' => round($runningBalance, 2)
-            ],
-            'data'    => $reportLines
+            'success'      => true,
+            'data'         => $reportLines,
+            'grandSummary' => $summaryData,
+            'meta'         => $summaryData,
         ]);
     }
 
     /**
      * 3. ميزان المراجعة (Trial Balance)
-     * تجميع الأرصدة الافتتاحية وحركات الفترة الحالية والأرصدة الختامية لجميع حسابات الشجرة المفتوحة
      */
     public function trialBalance(Request $request): JsonResponse
     {
@@ -314,8 +324,8 @@ class FinancialReportController extends Controller
         $accounts = Account::orderBy('code', 'asc')->get();
 
         $trialBalanceData = [];
-        $grandTotalDebitPeriod = 0;
-        $grandTotalCreditPeriod = 0;
+        $grandTotalDebitPeriod = 0.00;
+        $grandTotalCreditPeriod = 0.00;
 
         foreach ($accounts as $account) {
             $firstDigit = substr($account->code, 0, 1);
@@ -357,27 +367,30 @@ class FinancialReportController extends Controller
             }
 
             $trialBalanceData[] = [
-                'id'             => $account->id,
-                'code'           => $account->code,
-                'name'           => $account->name,
-                'parent_id'      => $account->parent_id,
-                'is_parent'      => $hasChildren,
-                'nature'         => $isDebitNature ? 'مدين' : 'دائن',
-                'opening_balance'=> round($openingBal, 2),
-                'period_debit'   => round($periodDebit, 2),
-                'period_credit'  => round($periodCredit, 2),
-                'closing_balance'=> round($closingBal, 2)
+                'id'              => $account->id,
+                'code'            => $account->code,
+                'name'            => $account->name,
+                'parent_id'       => $account->parent_id,
+                'is_parent'       => $hasChildren,
+                'nature'          => $isDebitNature ? 'مدين' : 'دائن',
+                'opening_balance' => round($openingBal, 2),
+                'period_debit'    => round($periodDebit, 2),
+                'period_credit'   => round($periodCredit, 2),
+                'closing_balance' => round($closingBal, 2),
             ];
         }
 
+        $totalsData = [
+            'total_period_debit'  => round($grandTotalDebitPeriod, 2),
+            'total_period_credit' => round($grandTotalCreditPeriod, 2),
+            'is_balanced'         => round($grandTotalDebitPeriod, 2) === round($grandTotalCreditPeriod, 2),
+        ];
+
         return response()->json([
-            'success' => true,
-            'totals'  => [
-                'total_period_debit'  => round($grandTotalDebitPeriod, 2),
-                'total_period_credit' => round($grandTotalCreditPeriod, 2),
-                'is_balanced'         => round($grandTotalDebitPeriod, 2) === round($grandTotalCreditPeriod, 2)
-            ],
-            'data'    => $trialBalanceData
+            'success'      => true,
+            'data'         => $trialBalanceData,
+            'grandSummary' => $totalsData,
+            'totals'       => $totalsData,
         ]);
     }
 
@@ -389,7 +402,7 @@ class FinancialReportController extends Controller
         $fromDate = $request->from_date ? Carbon::parse($request->from_date)->startOfDay() : null;
         $toDate = $request->to_date ? Carbon::parse($request->to_date)->endOfDay() : null;
 
-        $accounts = Account::get();
+        $accounts = Account::all();
 
         $revenues = [];
         $expenses = [];
@@ -411,6 +424,7 @@ class FinancialReportController extends Controller
             $debit = (float) $periodQuery->sum('debit');
             $credit = (float) $periodQuery->sum('credit');
 
+            // حسابات الإيرادات (تبدأ بـ 3)
             if ($firstDigit === '3') {
                 $netRevenue = $credit - $debit;
                 if ($netRevenue != 0) {
@@ -418,11 +432,12 @@ class FinancialReportController extends Controller
                     $revenues[] = [
                         'code'    => $account->code,
                         'name'    => $account->name,
-                        'balance' => round($netRevenue, 2)
+                        'balance' => round($netRevenue, 2),
                     ];
                 }
             }
 
+            // حسابات المصروفات وتكلفة النشاط (تبدأ بـ 4)
             if ($firstDigit === '4') {
                 $netExpense = $debit - $credit;
                 if ($netExpense != 0) {
@@ -430,27 +445,45 @@ class FinancialReportController extends Controller
                     $expenses[] = [
                         'code'    => $account->code,
                         'name'    => $account->name,
-                        'balance' => round($netExpense, 2)
+                        'balance' => round($netExpense, 2),
                     ];
                 }
             }
         }
 
         $netProfit = $totalRevenues - $totalExpenses;
+        $outcomeType = $netProfit >= 0 ? 'profit' : 'loss';
+        $outcomeLbl = $netProfit >= 0 ? 'صافي أرباح النشاط' : 'صافي خسائر النشاط';
+
+        $summaryData = [
+            'from_date'      => $fromDate ? $fromDate->format('Y-m-d') : 'تأسيس المنظومة',
+            'to_date'        => $toDate ? $toDate->format('Y-m-d') : now()->format('Y-m-d'),
+            'total_revenues' => round($totalRevenues, 2),
+            'total_expenses' => round($totalExpenses, 2),
+            'net_profit'     => round($netProfit, 2),
+            'outcome_type'   => $outcomeType,
+            'outcome_lbl'    => $outcomeLbl,
+        ];
 
         return response()->json([
-            'success' => true,
-            'meta'    => [
-                'from' => $fromDate ? $fromDate->format('Y-m-d') : 'تأسيس المنظومة',
-                'to'   => $toDate ? $toDate->format('Y-m-d') : now()->format('Y-m-d')
+            'success'        => true,
+            'data'           => [
+                'revenues' => $revenues,
+                'expenses' => $expenses,
+            ],
+            'grandSummary'   => $summaryData,
+            // الحفاظ على المفاتيح المسطحة للتوافق العكسي
+            'meta'           => [
+                'from' => $summaryData['from_date'],
+                'to'   => $summaryData['to_date'],
             ],
             'revenues'       => $revenues,
             'total_revenues' => round($totalRevenues, 2),
             'expenses'       => $expenses,
             'total_expenses' => round($totalExpenses, 2),
             'net_profit'     => round($netProfit, 2),
-            'outcome_type'   => $netProfit >= 0 ? 'profit' : 'loss',
-            'outcome_lbl'    => $netProfit >= 0 ? 'صافي أرباح النشاط' : 'صافي خسائر النشاط'
+            'outcome_type'   => $outcomeType,
+            'outcome_lbl'    => $outcomeLbl,
         ]);
     }
 
@@ -461,7 +494,7 @@ class FinancialReportController extends Controller
     {
         $toDate = $request->to_date ? Carbon::parse($request->to_date)->endOfDay() : null;
 
-        $accounts = Account::get();
+        $accounts = Account::all();
         $assets = [];
         $liabilitiesAndEquity = [];
 
@@ -485,9 +518,11 @@ class FinancialReportController extends Controller
             $debit = (float) $historyQuery->sum('debit');
             $credit = (float) $historyQuery->sum('credit');
 
+            // حساب الإيرادات والمصروفات التراكمية لتحديد صافي أرباح الفترة غير المقفلة
             if ($firstDigit === '3') $totalRevenues += ($credit - $debit);
             if ($firstDigit === '4') $totalExpenses += ($debit - $credit);
 
+            // 1: الأصول (الأصول العادية مدين - دائن، والحسابات العكسية كالإهلاك تقلل الأصول)
             if ($firstDigit === '1') {
                 $balance = $debit - $credit;
                 if ($balance != 0) {
@@ -495,11 +530,12 @@ class FinancialReportController extends Controller
                     $assets[] = [
                         'code'    => $account->code,
                         'name'    => $account->name,
-                        'balance' => round($balance, 2)
+                        'balance' => round($balance, 2),
                     ];
                 }
             }
 
+            // 2: الالتزامات وحقوق الملكية (دائن - مدين)
             if ($firstDigit === '2') {
                 $balance = $credit - $debit;
                 if ($balance != 0) {
@@ -507,7 +543,7 @@ class FinancialReportController extends Controller
                     $liabilitiesAndEquity[] = [
                         'code'    => $account->code,
                         'name'    => $account->name,
-                        'balance' => round($balance, 2)
+                        'balance' => round($balance, 2),
                     ];
                 }
             }
@@ -516,19 +552,36 @@ class FinancialReportController extends Controller
         $currentPeriodNetProfit = $totalRevenues - $totalExpenses;
         $totalLiabilitiesAndEquity += $currentPeriodNetProfit;
 
+        $isBalanced = round($totalAssets, 2) === round($totalLiabilitiesAndEquity, 2);
+        $asOfDate = $toDate ? $toDate->format('Y-m-d') : now()->format('Y-m-d');
+
+        $summaryData = [
+            'as_of_date'                   => $asOfDate,
+            'total_assets'                 => round($totalAssets, 2),
+            'current_period_net_profit'    => round($currentPeriodNetProfit, 2),
+            'total_liabilities_and_equity' => round($totalLiabilitiesAndEquity, 2),
+            'is_perfectly_balanced'        => $isBalanced,
+        ];
+
         return response()->json([
-            'success' => true,
-            'as_of_date' => $toDate ? $toDate->format('Y-m-d') : now()->format('Y-m-d'),
-            'assets' => [
+            'success'                => true,
+            'data'                   => [
+                'assets'                 => $assets,
+                'liabilities_and_equity' => $liabilitiesAndEquity,
+            ],
+            'grandSummary'           => $summaryData,
+            // الحفاظ على البنية القديمة للتوافقية
+            'as_of_date'             => $asOfDate,
+            'assets'                 => [
                 'items'        => $assets,
-                'total_assets' => round($totalAssets, 2)
+                'total_assets' => round($totalAssets, 2),
             ],
             'liabilities_and_equity' => [
-                'items'                               => $liabilitiesAndEquity,
-                'current_period_net_profit'           => round($currentPeriodNetProfit, 2),
-                'total_liabilities_and_equity'=> round($totalLiabilitiesAndEquity, 2)
+                'items'                        => $liabilitiesAndEquity,
+                'current_period_net_profit'    => round($currentPeriodNetProfit, 2),
+                'total_liabilities_and_equity' => round($totalLiabilitiesAndEquity, 2),
             ],
-            'is_perfectly_balanced' => round($totalAssets, 2) === round($totalLiabilitiesAndEquity, 2)
+            'is_perfectly_balanced'  => $isBalanced,
         ]);
     }
 }
