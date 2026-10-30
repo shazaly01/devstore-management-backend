@@ -36,6 +36,9 @@ use App\Http\Controllers\Api\OpeningStockController;
 use App\Http\Controllers\Api\TechnicianSaleController;
 use App\Http\Controllers\Api\MaterialConsumptionController;
 
+// --- استيراد موديول تفكيك وتجزئة الأصناف المخزنية ---
+use App\Http\Controllers\Api\ItemDisassemblyController;
+
 // --- استيراد متحكمات موديول التسعير والعملات الجديد ---
 use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\Api\ExchangeRateController;
@@ -120,6 +123,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('items/refresh-stock', [ItemController::class, 'refreshStock'])->name('items.refresh_stock');
     Route::put('items/{id}/reorder-level', [ItemController::class, 'updateReorderLevel']);
     Route::apiResource('items', ItemController::class);
+
+    // -------------------------------------------------------------
+    // --- موديول تفكيك وتجزئة الأصناف المخزنية (Disassembly Module) ---
+    // -------------------------------------------------------------
+    Route::apiResource('item-disassemblies', ItemDisassemblyController::class)->parameters([
+        'item-disassemblies' => 'item_disassembly'
+    ]);
 
     // -------------------------------------------------------------
     // --- موديول التسعير المتقدم وأسعار الصرف (Pricing & Currencies) ---

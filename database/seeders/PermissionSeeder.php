@@ -68,6 +68,9 @@ class PermissionSeeder extends Seeder
             // موديول فواتير المبيعات ومردوداتها ملاءمة خامات الورشة
             'sale.view', 'sale.create', 'sale.update', 'sale.delete', 'sale.swap_raw_materials',
 
+            // موديول تفكيك وتجزئة الأصناف المخزنية
+            'disassembly.view', 'disassembly.create', 'disassembly.delete',
+
             // إدارة موديول وسياسات التسعير والعملات
             'pricing.bulk-reprice',          // صلاحية معاينة وتطبيق إعادة التسعير الجماعي
             'pricing.view-radar',            // صلاحية استعراض رادار تآكل الهوامش
