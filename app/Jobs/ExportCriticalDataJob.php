@@ -21,7 +21,7 @@ class ExportCriticalDataJob implements ShouldQueue
     protected bool $isForce;
 
     /**
-     * مدة تثبيت صمام التحديث بالدقائق (تم ضبطها على 15 دقيقة كحد أدنى بين كل تحديث وآخر)
+     * مدة تثبيت صمام التحديث بالدقائق (15 دقيقة كحد أدنى بين كل تحديث وآخر)
      */
     protected int $throttleMinutes;
 
@@ -32,13 +32,18 @@ class ExportCriticalDataJob implements ShouldQueue
     }
 
     /**
-     * تنفيذ الوظيفة وتوليد ملف الإكسيل مع التحقق من الصمام الزمني
+     * تنفيذ الوظيفة وتوليد ملف الإكسيل مع التحقق من الصمام الزمني وصمام البيئة
      */
     public function handle(CriticalDataExportService $exportService): void
     {
+        // 1. صمام الأمان: إيقاف المهمة فوراً إذا كانت الميزة معطلة في الإعدادات
+        if (!config('services.emergency_backup.enabled')) {
+            return;
+        }
+
         $throttleKey = 'panda_critical_data_export_throttle_lock';
 
-        // إذا لم يكن استدعاءً إجبارياً وكان الصمام نشطاً (لم تمر 15 دقيقة منذ آخر تحديث)
+        // 2. إذا لم يكن استدعاءً إجبارياً وكان الصمام نشطاً (لم تمر 15 دقيقة منذ آخر تحديث)
         if (!$this->isForce && Cache::has($throttleKey)) {
             Log::info('الزناد الذكي: تم تجاوز تحديث إكسيل الطوارئ لأن الملف محدث بالفعل خلال الـ 15 دقيقة الماضية.');
             return;

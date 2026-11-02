@@ -53,4 +53,9 @@ return [
         'admin_phone' => env('WHATSAPP_ADMIN_PHONE'),
     ],
 
+
+    'emergency_backup' => [
+    'enabled' => env('ENABLE_EMERGENCY_EXCEL_BACKUP', false),
+    ],
+
 ];
