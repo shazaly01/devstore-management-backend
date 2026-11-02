@@ -8,7 +8,7 @@ use Illuminate\Http\Resources\Json\JsonResource;
 class SaleResource extends JsonResource
 {
     /**
-     * تحويل بيانات رأس فاتورة المبيعات مع تضمين السطور التابعة لها إلى JSON جاهز للطباعة والعرض
+     * تحويل بيانات رأس فاتورة المبيعات مع تضمين السطور التابعة لها ورابط الـ PDF وهاتف العميل
      */
     public function toArray(Request $request): array
     {
@@ -48,6 +48,8 @@ class SaleResource extends JsonResource
 
         return [
             'id'               => $this->id,
+            'uuid'             => $this->uuid,
+            'pdf_url'          => $this->pdf_url,
             'invoice_type'     => $this->invoice_type,
             'invoice_type_lbl' => $this->invoice_type === 'sale' ? 'فاتورة مبيعات' : 'مردودات مبيعات',
             'invoice_sequence' => $this->invoice_sequence,
@@ -68,6 +70,7 @@ class SaleResource extends JsonResource
             'customer_id'        => $this->customer_id,
             'customer_name'      => $this->customer->name ?? null,
             'customer_name_text' => $this->customer_name_text,
+            'customer_phone'     => $this->customer->phone ?? null,
             'user_id'            => $this->user_id,
             'user_name'          => $this->user->name ?? null,
 

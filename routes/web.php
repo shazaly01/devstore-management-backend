@@ -2,19 +2,19 @@
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\File;
+use App\Http\Controllers\Api\PublicInvoiceController;
 
 /*
 |--------------------------------------------------------------------------
 | Web Routes - SPA Frontend Handler
 |--------------------------------------------------------------------------
-|
-| هنا يتم إدارة مسارات الويب للنظام. هذا المسار مخصص لخدمة واجهة الـ Vue
-| كمشروع مدمج (SPA). يقوم بالتقاط جميع الروابط وتوجيهها لملف الـ index.html
-| المترجم، باستثناء المسارات التي تبدأ بـ /api لضمان عمل الـ Controllers بنجاح.
-|
 */
 
-// مسار المصيد العام (Catch-All Route) واشتراط استثناء الـ API والـ Health Check تلقائياً
+// مسار استعراض وتحميل الفاتورة العام والمباشر للعميل عبر الواتساب (بدون تسجيل دخول)
+Route::get('/invoices/v/{uuid}', [PublicInvoiceController::class, 'show'])
+    ->name('invoices.public.show');
+
+// مسار المصيد العام (Catch-All Route) واشتراط استثناء الـ API وروابط الفواتير والـ Health Check
 Route::any('{any}', function () {
     $indexPath = public_path('index.html');
 
@@ -23,9 +23,8 @@ Route::any('{any}', function () {
         return File::get($indexPath);
     }
 
-    // استجابة نظيفة في حال عدم توفر ملفات الواجهة بعد في مجلد public
     return response()->json([
         'status' => false,
         'message' => 'Frontend build files (index.html) are missing in the public directory. Please run npm run build on your frontend project.',
     ], 404);
-})->where('any', '^(?!api|up).*$');
+})->where('any', '^(?!api|up|invoices).*$');

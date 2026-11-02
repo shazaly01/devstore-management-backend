@@ -15,6 +15,7 @@ use App\Models\Store;
 use App\Models\ItemComponent;
 use App\Services\StockMovementService;
 use App\Services\JournalEntryService;
+use App\Services\InvoicePdfService;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Exception;
@@ -23,11 +24,16 @@ class SaleService
 {
     protected $stockService;
     protected $journalService;
+    protected $pdfService;
 
-    public function __construct(StockMovementService $stockService, JournalEntryService $journalService)
-    {
+    public function __construct(
+        StockMovementService $stockService,
+        JournalEntryService $journalService,
+        InvoicePdfService $pdfService
+    ) {
         $this->stockService = $stockService;
         $this->journalService = $journalService;
+        $this->pdfService = $pdfService;
     }
 
     /**
@@ -68,213 +74,216 @@ class SaleService
         return $query->orderByDesc('created_at')->orderByDesc('id')->paginate($perPage);
     }
 
-/**
+    /**
      * معالجة وحفظ فاتورة مبيعات أو مرتجع جديدة بالكامل وتفكيك الأصناف التجميعية مخزنياً
      */
-public function createSale(array $data, int $userId): Sale
-{
-    return DB::transaction(function () use ($data, $userId) {
-        $saleData = array_merge($data, ['user_id' => $userId]);
-        $items = $saleData['items'];
+    public function createSale(array $data, int $userId): Sale
+    {
+        return DB::transaction(function () use ($data, $userId) {
+            $saleData = array_merge($data, ['user_id' => $userId]);
+            $items = $saleData['items'];
 
-        // فحص المخزون قبل إنشاء الفاتورة وحجز الكميات
-        $this->validateStockAvailability(
-            $items,
-            (int) $saleData['store_id'],
-            $saleData['invoice_type'] ?? 'sale',
-            $userId
-        );
+            // فحص المخزون قبل إنشاء الفاتورة وحجز الكميات
+            $this->validateStockAvailability(
+                $items,
+                (int) $saleData['store_id'],
+                $saleData['invoice_type'] ?? 'sale',
+                $userId
+            );
 
-        unset($saleData['items']);
-        $sale = Sale::create($saleData);
+            unset($saleData['items']);
+            $sale = Sale::create($saleData);
 
-        foreach ($items as $item) {
-            $itemUnit = ItemUnit::with(['unit', 'item'])
-                ->where('item_id', $item['item_id'])
-                ->where('id', $item['item_unit_id'])
-                ->firstOrFail();
+            foreach ($items as $item) {
+                $itemUnit = ItemUnit::with(['unit', 'item'])
+                    ->where('item_id', $item['item_id'])
+                    ->where('id', $item['item_unit_id'])
+                    ->firstOrFail();
 
-            // حفظ سطر الفاتورة
-            $saleItem = $sale->items()->create([
-                'item_id'         => $item['item_id'],
-                'item_unit_id'    => $itemUnit->id,
-                'quantity'        => $item['quantity'],
-                'unit_price'      => $item['unit_price'],
-                'price_type'      => $item['price_type'] ?? 'default',
-                'subtotal'        => $item['subtotal'],
-                'discount_amount' => $item['discount_amount'] ?? 0.00,
-                'grand_total'     => $item['grand_total'],
-            ]);
+                // حفظ سطر الفاتورة
+                $saleItem = $sale->items()->create([
+                    'item_id'         => $item['item_id'],
+                    'item_unit_id'    => $itemUnit->id,
+                    'quantity'        => $item['quantity'],
+                    'unit_price'      => $item['unit_price'],
+                    'price_type'      => $item['price_type'] ?? 'default',
+                    'subtotal'        => $item['subtotal'],
+                    'discount_amount' => $item['discount_amount'] ?? 0.00,
+                    'grand_total'     => $item['grand_total'],
+                ]);
 
-            $quantity = (float) $item['quantity'];
-            $unitFactor = (float) $itemUnit->conversion_factor;
+                $quantity = (float) $item['quantity'];
+                $unitFactor = (float) $itemUnit->conversion_factor;
 
-            // الفحص والفك الشرطي للأصناف التجميعية بناءً على الكمية المباعة المباشرة
-            if ($itemUnit->item && $itemUnit->item->is_composite) {
-                $components = ItemComponent::where('parent_item_id', $itemUnit->item_id)->get();
+                // الفحص والفك الشرطي للأصناف التجميعية بناءً على الكمية المباعة المباشرة
+                if ($itemUnit->item && $itemUnit->item->is_composite) {
+                    $components = ItemComponent::where('parent_item_id', $itemUnit->item_id)->get();
 
-                foreach ($components as $component) {
-                    $childItem = Item::find($component->child_item_id);
-                    if (!$childItem) continue;
+                    foreach ($components as $component) {
+                        $childItem = Item::find($component->child_item_id);
+                        if (!$childItem) continue;
 
-                    $childBaseUnit = ItemUnit::with('unit')
-                        ->where('item_id', $childItem->id)
-                        ->where('unit_id', $childItem->base_unit_id)
-                        ->first();
+                        $childBaseUnit = ItemUnit::with('unit')
+                            ->where('item_id', $childItem->id)
+                            ->where('unit_id', $childItem->base_unit_id)
+                            ->first();
 
-                    if (!$childBaseUnit) continue;
+                        if (!$childBaseUnit) continue;
 
-                    $componentQtyCalculated = $quantity * $unitFactor * (float) $component->quantity;
-                    $qty = $sale->invoice_type === 'sale' ? -$componentQtyCalculated : $componentQtyCalculated;
-                    $childUnitName = $childBaseUnit->unit->name ?? 'حبة';
+                        $componentQtyCalculated = $quantity * $unitFactor * (float) $component->quantity;
+                        $qty = $sale->invoice_type === 'sale' ? -$componentQtyCalculated : $componentQtyCalculated;
+                        $childUnitName = $childBaseUnit->unit->name ?? 'حبة';
+
+                        $this->stockService->recordMovement(
+                            $childItem->id,
+                            $sale->store_id,
+                            $childBaseUnit->id,
+                            $sale->invoice_type === 'sale' ? 'sales' : 'adjustment',
+                            $sale->invoice_number,
+                            $childUnitName,
+                            $qty,
+                            1.0,
+                            (float) $childBaseUnit->cost,
+                            $sale->notes
+                        );
+                    }
+                } else {
+                    // الأصناف العادية: خصم/إضافة الكمية الصريحة مباشرة
+                    $qty = $sale->invoice_type === 'sale' ? -$quantity : $quantity;
+                    $unitName = $itemUnit->unit->name ?? 'حبة';
 
                     $this->stockService->recordMovement(
-                        $childItem->id,
+                        $item['item_id'],
                         $sale->store_id,
-                        $childBaseUnit->id,
+                        $itemUnit->id,
                         $sale->invoice_type === 'sale' ? 'sales' : 'adjustment',
                         $sale->invoice_number,
-                        $childUnitName,
+                        $unitName,
                         $qty,
-                        1.0,
-                        (float) $childBaseUnit->cost,
+                        $unitFactor,
+                        $item['unit_price'],
                         $sale->notes
                     );
                 }
-            } else {
-                // الأصناف العادية: خصم/إضافة الكمية الصريحة مباشرة
-                $qty = $sale->invoice_type === 'sale' ? -$quantity : $quantity;
-                $unitName = $itemUnit->unit->name ?? 'حبة';
-
-                $this->stockService->recordMovement(
-                    $item['item_id'],
-                    $sale->store_id,
-                    $itemUnit->id,
-                    $sale->invoice_type === 'sale' ? 'sales' : 'adjustment',
-                    $sale->invoice_number,
-                    $unitName,
-                    $qty,
-                    $unitFactor,
-                    $item['unit_price'],
-                    $sale->notes
-                );
             }
-        }
 
-        $journalEntry = $this->generateJournalEntry($sale);
-        $sale->update(['journal_entry_id' => $journalEntry->id]);
+            $journalEntry = $this->generateJournalEntry($sale);
+            $sale->update(['journal_entry_id' => $journalEntry->id]);
 
-        return $sale->load('items.itemUnit.unit');
-    });
-}
+            return $sale->load('items.itemUnit.unit');
+        });
+    }
 
-   /**
+    /**
      * معالجة تعديل وتحديث فاتورة مبيعات قائمة
      */
-   public function updateSale(Sale $sale, array $data): Sale
-   {
-       return DB::transaction(function () use ($sale, $data) {
-           // 1. إعادة ترصيد المخزون القديم لحساب الرصيد الحقيقي قبل التحقق
-           $this->stockService->clearDocumentMovements($sale->invoice_number);
+    public function updateSale(Sale $sale, array $data): Sale
+    {
+        return DB::transaction(function () use ($sale, $data) {
+            // 1. إعادة ترصيد المخزون القديم لحساب الرصيد الحقيقي قبل التحقق
+            $this->stockService->clearDocumentMovements($sale->invoice_number);
 
-           // الاحتفاظ بالقيد الحالي لتحديث أسطره بدلاً من حذف رأسه وإنشاء قيد جديد
-           $existingEntry = $sale->journal_entry_id
-               ? JournalEntry::with('lines')->find($sale->journal_entry_id)
-               : null;
+            // الاحتفاظ بالقيد الحالي لتحديث أسطره بدلاً من حذف رأسه وإنشاء قيد جديد
+            $existingEntry = $sale->journal_entry_id
+                ? JournalEntry::with('lines')->find($sale->journal_entry_id)
+                : null;
 
-           $items = $data['items'];
-           $targetStoreId = (int) ($data['store_id'] ?? $sale->store_id);
-           $invoiceType = $data['invoice_type'] ?? $sale->invoice_type;
+            $items = $data['items'];
+            $targetStoreId = (int) ($data['store_id'] ?? $sale->store_id);
+            $invoiceType = $data['invoice_type'] ?? $sale->invoice_type;
 
-           // 2. فحص المخزون المتاح بعد تفريغ الحركات القديمة
-           $this->validateStockAvailability(
-               $items,
-               $targetStoreId,
-               $invoiceType,
-               $sale->user_id
-           );
+            // 2. فحص المخزون المتاح بعد تفريغ الحركات القديمة
+            $this->validateStockAvailability(
+                $items,
+                $targetStoreId,
+                $invoiceType,
+                $sale->user_id
+            );
 
-           unset($data['items']);
-           $sale->update($data);
+            unset($data['items']);
+            $sale->update($data);
 
-           $sale->items()->delete();
+            $sale->items()->delete();
 
-           foreach ($items as $item) {
-               $itemUnit = ItemUnit::with(['unit', 'item'])
-                   ->where('item_id', $item['item_id'])
-                   ->where('id', $item['item_unit_id'])
-                   ->firstOrFail();
+            foreach ($items as $item) {
+                $itemUnit = ItemUnit::with(['unit', 'item'])
+                    ->where('item_id', $item['item_id'])
+                    ->where('id', $item['item_unit_id'])
+                    ->firstOrFail();
 
-               $saleItem = $sale->items()->create([
-                   'item_id'         => $item['item_id'],
-                   'item_unit_id'    => $itemUnit->id,
-                   'quantity'        => $item['quantity'],
-                   'unit_price'      => $item['unit_price'],
-                   'price_type'      => $item['price_type'] ?? 'default',
-                   'subtotal'        => $item['subtotal'],
-                   'discount_amount' => $item['discount_amount'] ?? 0.00,
-                   'grand_total'     => $item['grand_total'],
-               ]);
+                $saleItem = $sale->items()->create([
+                    'item_id'         => $item['item_id'],
+                    'item_unit_id'    => $itemUnit->id,
+                    'quantity'        => $item['quantity'],
+                    'unit_price'      => $item['unit_price'],
+                    'price_type'      => $item['price_type'] ?? 'default',
+                    'subtotal'        => $item['subtotal'],
+                    'discount_amount' => $item['discount_amount'] ?? 0.00,
+                    'grand_total'     => $item['grand_total'],
+                ]);
 
-               $quantity = (float) $item['quantity'];
-               $unitFactor = (float) $itemUnit->conversion_factor;
+                $quantity = (float) $item['quantity'];
+                $unitFactor = (float) $itemUnit->conversion_factor;
 
-               if ($itemUnit->item && $itemUnit->item->is_composite) {
-                   $components = ItemComponent::where('parent_item_id', $itemUnit->item_id)->get();
+                if ($itemUnit->item && $itemUnit->item->is_composite) {
+                    $components = ItemComponent::where('parent_item_id', $itemUnit->item_id)->get();
 
-                   foreach ($components as $component) {
-                       $childItem = Item::find($component->child_item_id);
-                       if (!$childItem) continue;
+                    foreach ($components as $component) {
+                        $childItem = Item::find($component->child_item_id);
+                        if (!$childItem) continue;
 
-                       $childBaseUnit = ItemUnit::with('unit')
-                           ->where('item_id', $childItem->id)
-                           ->where('unit_id', $childItem->base_unit_id)
-                           ->first();
+                        $childBaseUnit = ItemUnit::with('unit')
+                            ->where('item_id', $childItem->id)
+                            ->where('unit_id', $childItem->base_unit_id)
+                            ->first();
 
-                       if (!$childBaseUnit) continue;
+                        if (!$childBaseUnit) continue;
 
-                       $componentQtyCalculated = $quantity * $unitFactor * (float) $component->quantity;
-                       $qty = $sale->invoice_type === 'sale' ? -$componentQtyCalculated : $componentQtyCalculated;
-                       $childUnitName = $childBaseUnit->unit->name ?? 'حبة';
+                        $componentQtyCalculated = $quantity * $unitFactor * (float) $component->quantity;
+                        $qty = $sale->invoice_type === 'sale' ? -$componentQtyCalculated : $componentQtyCalculated;
+                        $childUnitName = $childBaseUnit->unit->name ?? 'حبة';
 
-                       $this->stockService->recordMovement(
-                           $childItem->id,
-                           $sale->store_id,
-                           $childBaseUnit->id,
-                           $sale->invoice_type === 'sale' ? 'sales' : 'adjustment',
-                           $sale->invoice_number,
-                           $childUnitName,
-                           $qty,
-                           1.0,
-                           (float) $childBaseUnit->cost,
-                           $sale->notes
-                       );
-                   }
-               } else {
-                   $qty = $sale->invoice_type === 'sale' ? -$quantity : $quantity;
-                   $unitName = $itemUnit->unit->name ?? 'حبة';
+                        $this->stockService->recordMovement(
+                            $childItem->id,
+                            $sale->store_id,
+                            $childBaseUnit->id,
+                            $sale->invoice_type === 'sale' ? 'sales' : 'adjustment',
+                            $sale->invoice_number,
+                            $childUnitName,
+                            $qty,
+                            1.0,
+                            (float) $childBaseUnit->cost,
+                            $sale->notes
+                        );
+                    }
+                } else {
+                    $qty = $sale->invoice_type === 'sale' ? -$quantity : $quantity;
+                    $unitName = $itemUnit->unit->name ?? 'حبة';
 
-                   $this->stockService->recordMovement(
-                       $item['item_id'],
-                       $sale->store_id,
-                       $itemUnit->id,
-                       $sale->invoice_type === 'sale' ? 'sales' : 'adjustment',
-                       $sale->invoice_number,
-                       $unitName,
-                       $qty,
-                       $unitFactor,
-                       $item['unit_price'],
-                       $sale->notes
-                   );
-               }
-           }
+                    $this->stockService->recordMovement(
+                        $item['item_id'],
+                        $sale->store_id,
+                        $itemUnit->id,
+                        $sale->invoice_type === 'sale' ? 'sales' : 'adjustment',
+                        $sale->invoice_number,
+                        $unitName,
+                        $qty,
+                        $unitFactor,
+                        $item['unit_price'],
+                        $sale->notes
+                    );
+                }
+            }
 
-           $newEntry = $this->generateJournalEntry($sale, $existingEntry);
-           $sale->update(['journal_entry_id' => $newEntry->id]);
+            $newEntry = $this->generateJournalEntry($sale, $existingEntry);
+            $sale->update(['journal_entry_id' => $newEntry->id]);
 
-           return $sale->load('items.itemUnit.unit');
-       });
-   }
+            // مسح كاش الـ PDF القديم ليعاد توليد الفاتورة بالبيانات الجديدة فور فتحها
+            $this->pdfService->clearPdfCache($sale);
+
+            return $sale->load('items.itemUnit.unit');
+        });
+    }
 
     /**
      * حذف أرشيفي لفاتورة المبيعات مع تصفية أثرها المخزني والمالي
@@ -290,6 +299,9 @@ public function createSale(array $data, int $userId): Sale
                     $this->journalService->deleteEntry($oldEntry);
                 }
             }
+
+            // مسح ملف الـ PDF من السيرفر عند الحذف
+            $this->pdfService->clearPdfCache($sale);
 
             $sale->delete();
         });
@@ -343,8 +355,6 @@ public function createSale(array $data, int $userId): Sale
         if ($sale->invoice_type === 'sale') {
             $invoiceTotal = (float) $sale->grand_total;
 
-            // القيم غير الفارغة تعني أن الفاتورة تستخدم توزيع الدفع الجديد.
-            // القيم null تعني فاتورة قديمة، فتُفسر وفق payment_type المسجل سابقاً.
             if ($sale->cash_amount !== null || $sale->bank_amount !== null) {
                 $cashAmount = round((float) ($sale->cash_amount ?? 0), 2);
                 $bankAmount = round((float) ($sale->bank_amount ?? 0), 2);
@@ -595,12 +605,12 @@ public function createSale(array $data, int $userId): Sale
                 'production_status' => $productionStatus
             ]);
 
+            // مسح كاش الـ PDF لتحديث بيانات الخامات المستبدلة فوراً
+            $this->pdfService->clearPdfCache($sale);
+
             return $sale->load('items.itemUnit.unit');
         });
     }
-
-
-
 
     /**
      * التحقق الصارم من توفر الرصيد المخزني للأصناف قبل إتمام عملية البيع عند تفعيل خيار التحكم بالمخزون
@@ -609,7 +619,6 @@ public function createSale(array $data, int $userId): Sale
      */
     protected function validateStockAvailability(array $items, int $storeId, string $invoiceType, int $userId): void
     {
-        // التحقق ينطبق فقط على فواتير المبيعات الصادرة
         if ($invoiceType !== 'sale') {
             return;
         }
@@ -619,7 +628,6 @@ public function createSale(array $data, int $userId): Sale
             return;
         }
 
-        // تجميع إجمالي الكميات المطلوبة بالوحدة الصغرى لكل صنف (لمنع التحايل بتكرار الصنف في أكثر من سطر)
         $requiredQuantities = [];
 
         foreach ($items as $itemData) {
@@ -632,7 +640,6 @@ public function createSale(array $data, int $userId): Sale
             $unitFactor = (float) ($itemUnit->conversion_factor ?? 1.0);
             $baseQuantity = $quantity * $unitFactor;
 
-            // تفكيك الأصناف التجميعية وفحص أرصدة خاماتها ومكوناتها الأساسية
             if ($itemUnit->item && $itemUnit->item->is_composite) {
                 $components = ItemComponent::where('parent_item_id', $itemUnit->item_id)->get();
 
@@ -664,7 +671,6 @@ public function createSale(array $data, int $userId): Sale
             }
         }
 
-        // فحص مطابقة الكمية المطلوبة مع الرصيد اللحظي الفعلي في المستودع
         foreach ($requiredQuantities as $itemId => $demand) {
             $currentStock = (float) (ItemStock::where('item_id', $itemId)
                 ->where('store_id', $storeId)

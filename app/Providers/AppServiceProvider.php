@@ -14,6 +14,10 @@ use App\Services\WhatsApp\Handlers\LiquidityQueryHandler;
 use App\Services\WhatsApp\Handlers\TopCreditorsQueryHandler;
 use App\Services\WhatsApp\Handlers\ExpensesQueryHandler;
 use App\Services\WhatsApp\Handlers\HelpQueryHandler;
+use App\Models\Sale;
+use App\Models\Purchase;
+use App\Models\Voucher;
+use App\Jobs\ExportCriticalDataJob;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -57,6 +61,28 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        // تشغيل الزناد الذكي لتحديث إكسيل الطوارئ بعد حفظ أو إلغاء فواتير المبيعات
+        Sale::saved(function () {
+            ExportCriticalDataJob::dispatchAfterResponse();
+        });
+        Sale::deleted(function () {
+            ExportCriticalDataJob::dispatchAfterResponse();
+        });
+
+        // تشغيل الزناد الذكي لتحديث إكسيل الطوارئ بعد حفظ أو إلغاء فواتير المشتريات
+        Purchase::saved(function () {
+            ExportCriticalDataJob::dispatchAfterResponse();
+        });
+        Purchase::deleted(function () {
+            ExportCriticalDataJob::dispatchAfterResponse();
+        });
+
+        // تشغيل الزناد الذكي لتحديث إكسيل الطوارئ بعد حفظ أو إلغاء سندات القبض والصرف
+        Voucher::saved(function () {
+            ExportCriticalDataJob::dispatchAfterResponse();
+        });
+        Voucher::deleted(function () {
+            ExportCriticalDataJob::dispatchAfterResponse();
+        });
     }
 }

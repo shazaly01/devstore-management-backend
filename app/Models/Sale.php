@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Str;
 
 class Sale extends Model
 {
@@ -19,6 +20,7 @@ class Sale extends Model
     const STATUS_COMPLETED = 'completed';
 
     protected $fillable = [
+        'uuid',
         'invoice_type',
         'invoice_sequence',
         'invoice_number',
@@ -47,6 +49,7 @@ class Sale extends Model
     ];
 
     protected $casts = [
+        'uuid'                 => 'string',
         'invoice_sequence'     => 'integer',
         'invoice_date'         => 'datetime',
         'subtotal'             => 'float',
@@ -67,6 +70,11 @@ class Sale extends Model
         parent::boot();
 
         static::creating(function ($sale) {
+            // توليد معرف الوصول الآمن غير القابل للتخمين
+            if (empty($sale->uuid)) {
+                $sale->uuid = (string) Str::uuid();
+            }
+
             // استخدام withTrashed() لتشمل الفواتير المحذوفة ناعماً
             $lastSequence = self::withTrashed()
                 ->where('invoice_type', $sale->invoice_type)
@@ -78,6 +86,14 @@ class Sale extends Model
             $prefix = $sale->invoice_type === 'sale' ? 'INV-' : 'SR-';
             $sale->invoice_number = $prefix . str_pad($nextSequence, 4, '0', STR_PAD_LEFT);
         });
+    }
+
+    /**
+     * رابط استعراض الفاتورة المباشر للعميل عبر الواتساب
+     */
+    public function getPdfUrlAttribute(): ?string
+    {
+        return $this->uuid ? route('invoices.public.show', ['uuid' => $this->uuid]) : null;
     }
 
     public function parentInvoice(): BelongsTo

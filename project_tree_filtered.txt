@@ -2,6 +2,7 @@
 ├── [DIR] Console
 │   ├── [DIR] Commands
 │   │   ├── AutoBackupCommand.php
+│   │   ├── SyncToDistributionCommand.php
 ├── [DIR] Http
 │   ├── [DIR] Controllers
 │   │   ├── [DIR] Api
@@ -16,6 +17,7 @@
 │   │   │   ├── ExchangeRateController.php
 │   │   │   ├── ExpenseController.php
 │   │   │   ├── ItemController.php
+│   │   │   ├── ItemDisassemblyController.php
 │   │   │   ├── JournalEntryController.php
 │   │   │   ├── MaterialConsumptionController.php
 │   │   │   ├── MessageController.php
@@ -65,6 +67,9 @@
 │   │   │   ├── StoreItemRequest.php
 │   │   │   ├── UpdateItemReorderLevelRequest.php
 │   │   │   ├── UpdateItemRequest.php
+│   │   ├── [DIR] ItemDisassembly
+│   │   │   ├── StoreItemDisassemblyRequest.php
+│   │   │   ├── UpdateItemDisassemblyRequest.php
 │   │   ├── [DIR] JournalEntry
 │   │   │   ├── StoreJournalEntryRequest.php
 │   │   │   ├── UpdateJournalEntryRequest.php
@@ -121,6 +126,7 @@
 │   │   │   ├── DashboardStatsResource.php
 │   │   │   ├── EmployeeResource.php
 │   │   │   ├── ExpenseResource.php
+│   │   │   ├── ItemDisassemblyResource.php
 │   │   │   ├── ItemResource.php
 │   │   │   ├── JournalEntryLineResource.php
 │   │   │   ├── JournalEntryResource.php
@@ -162,6 +168,8 @@
 │   ├── Item.php
 │   ├── ItemBarcode.php
 │   ├── ItemComponent.php
+│   ├── ItemDisassembly.php
+│   ├── ItemDisassemblyItem.php
 │   ├── ItemMovement.php
 │   ├── ItemPriceHistory.php
 │   ├── ItemPriceHistoryMain.php
@@ -195,6 +203,7 @@
 │   ├── DashboardPolicy.php
 │   ├── EmployeePolicy.php
 │   ├── ExpensePolicy.php
+│   ├── ItemDisassemblyPolicy.php
 │   ├── ItemPolicy.php
 │   ├── JournalEntryPolicy.php
 │   ├── MessagePolicy.php
@@ -216,6 +225,7 @@
 ├── [DIR] Services
 │   ├── DashboardService.php
 │   ├── FinancialDashboardService.php
+│   ├── ItemDisassemblyService.php
 │   ├── ItemService.php
 │   ├── JournalEntryService.php
 │   ├── MaterialConsumptionService.php
@@ -239,16 +249,22 @@
 │   │   ├── [DIR] Contracts
 │   │   │   ├── QueryHandlerInterface.php
 │   │   ├── [DIR] Handlers
+│   │   │   ├── ExpensesQueryHandler.php
+│   │   │   ├── HelpQueryHandler.php
 │   │   │   ├── ItemStockQueryHandler.php
 │   │   │   ├── LatestInvoiceQueryHandler.php
+│   │   │   ├── LiquidityQueryHandler.php
 │   │   │   ├── LowStockQueryHandler.php
 │   │   │   ├── MaterialConsumptionQueryHandler.php
 │   │   │   ├── PartyBalanceQueryHandler.php
 │   │   │   ├── SalesQueryHandler.php
+│   │   │   ├── TopCreditorsQueryHandler.php
 │   │   │   ├── TopDebtorsQueryHandler.php
 │   │   ├── IntentParsingService.php
 │   │   ├── QueryHandlerRegistry.php
 │   │   ├── ReportManagerService.php
+│   │   ├── [DIR] Traits
+│   │   │   ├── HandlesBranchConnections.php
 │   │   ├── WhatsAppResponseService.php
 
 ============ [ DATABASE FOLDER ] ============
@@ -356,6 +372,10 @@
 │   ├── 2026_08_22_161730_add_foreign_cost_to_item_units_table.php
 │   ├── 2026_08_28_043127_create_item_price_history_mains_table.php
 │   ├── 2026_08_28_043130_add_item_price_history_main_id_to_item_price_histories_table.php
+│   ├── 2026_10_24_190847_add_cash_and_bank_amounts_to_sales_table.php
+│   ├── 2026_10_29_181945_create_item_disassemblies_table.php
+│   ├── 2026_10_29_182011_create_item_disassembly_items_table.php
+│   ├── 2026_10_29_191954_alter_columns_precision_in_item_disassemblies_tables.php
 ├── [DIR] seeders
 │   ├── CurrencySeeder.php
 │   ├── DatabaseSeeder.php
