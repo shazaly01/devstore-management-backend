@@ -4,12 +4,17 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Services\LicenseService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Spatie\Permission\Models\Permission;
 
 class AuthController extends Controller
 {
+    public function __construct(
+        protected LicenseService $licenseService
+    ) {}
+
     public function login(Request $request)
     {
         $request->validate([
@@ -41,10 +46,14 @@ class AuthController extends Controller
         // ننشئ توكن جديد
         $token = $user->createToken('api_token')->plainTextToken;
 
+        // جلب حالة ترخيص النظام الحالية لإرسالها مع بيانات الدخول
+        $licenseStatus = $this->licenseService->getStatus();
+
         return response()->json([
             'message' => 'Login successful',
             'access_token' => $token, // نعيد التوكن للفرونت
             'user' => $user,
+            'license' => $licenseStatus,
         ]);
     }
 

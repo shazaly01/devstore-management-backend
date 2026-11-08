@@ -44,6 +44,11 @@ use App\Http\Controllers\Api\PricingController;
 use App\Http\Controllers\Api\ExchangeRateController;
 use App\Http\Controllers\Api\WhatsAppWebhookController;
 
+use App\Http\Controllers\Api\ImportController;
+
+// --- استيراد متحكم الترخيص وحالة النظام ---
+use App\Http\Controllers\Api\LicenseController;
+use App\Http\Controllers\Api\SettingController;
 /*
 |--------------------------------------------------------------------------
 | API Routes
@@ -55,6 +60,12 @@ Route::post('/login', [AuthController::class, 'login']);
 
 Route::post('/whatsapp/webhook', [WhatsAppWebhookController::class, 'handle'])
     ->middleware(\App\Http\Middleware\ValidateWhatsAppSender::class);
+
+// --- مسارات إدارة واستعلام الترخيص ---
+Route::prefix('license')->group(function () {
+    Route::get('/status', [LicenseController::class, 'status']);
+    Route::post('/activate', [LicenseController::class, 'activate']);
+});
 
 // --- المسارات المحمية (Protected Routes) ---
 Route::middleware('auth:sanctum')->group(function () {
@@ -70,6 +81,22 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/download', [BackupController::class, 'download'])->name('download'); // التحقق هنا ذاتي ومحمي بالتوقيع الرقمي المؤقت
         Route::post('/restore', [BackupController::class, 'restore'])->middleware('can:backup.restore');
         Route::delete('/', [BackupController::class, 'destroy'])->middleware('can:backup.delete');
+    });
+
+    // إعدادات النظام العامة
+    Route::prefix('settings')->name('settings.')->group(function () {
+        Route::get('/', [SettingController::class, 'index'])->name('index');
+        Route::put('/', [SettingController::class, 'update'])->name('update');
+        Route::get('/{key}', [SettingController::class, 'show'])->name('show');
+    });
+
+    // -------------------------------------------------------------
+    // --- موديول استيراد البيانات المجمعة من ملفات الإكسيل ---
+    // -------------------------------------------------------------
+    Route::prefix('import')->name('import.')->group(function () {
+        Route::post('customers', [ImportController::class, 'importCustomers'])->name('customers');
+        Route::post('suppliers', [ImportController::class, 'importSuppliers'])->name('suppliers');
+        Route::post('items', [ImportController::class, 'importItems'])->name('items');
     });
 
     // 3. إدارة المستخدمين والأدوار

@@ -27,8 +27,11 @@ class DatabaseSeeder extends Seeder
             // 5. زرع قوائم فئات الأسعار
             PriceListSeeder::class,
 
-            // 6. زرع البيانات التجريبية الشاملة (الأصناف، الوحدات، المخازن، الأرصدة الافتتاحية، والقيد المتوازن)
-            DemoDataSeeder::class,
+            SettingSeeder::class,
+
+
+            // // 6. زرع البيانات التجريبية الشاملة (الأصناف، الوحدات، المخازن، الأرصدة الافتتاحية، والقيد المتوازن)
+            // DemoDataSeeder::class,
         ]);
     }
 }

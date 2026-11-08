@@ -16,29 +16,98 @@ class OnlineBackupService
 
     public function __construct()
     {
-        // تحديد مسار حفظ الباك اب أونلاين ومجلد العمليات المؤقتة
+        // تأمين بيئة ويندوز للعمليات الفرعية
+        $this->ensureSystemEnvironment();
+
+        // مسارات حفظ النسخ الاحتياطية
         $this->backupPath = storage_path('app' . DIRECTORY_SEPARATOR . 'backups' . DIRECTORY_SEPARATOR . 'online');
-        $this->tempPath = storage_path('app' . DIRECTORY_SEPARATOR . 'backup-temp');
+        $this->tempPath   = storage_path('app' . DIRECTORY_SEPARATOR . 'backup-temp');
     }
 
     /**
-     * كشف ذكي لمسار أدوات MySQL:
-     * - في بيئة العميل المحمولة (Windows Portable): يكتشف مجلد bin المحلي تلقائياً
-     * - في بيئة السيرفر (Linux / Online): يُرجع null ليعتمد على أدوات النظام القياسية دون تعديل
+     * كشف معماري ديناميكي لمسار أدوات MySQL:
+     * 1. المتغير الصريح في .env (إن وُجد)
+     * 2. السيرفر المحمول للعميل (Portable Bundle)
+     * 3. بيئة التطوير المحلية (WampServer)
+     * 4. البيئة الافتراضية (Linux / System PATH)
      */
     protected function getBinaryPath(): ?string
     {
-        if (env('MYSQL_BINARY_PATH')) {
-            return env('MYSQL_BINARY_PATH');
+        // 1. أولوية التخصيص اليدوي عبر .env
+        if ($envPath = env('MYSQL_BINARY_PATH')) {
+            if (File::isDirectory($envPath)) {
+                return realpath($envPath);
+            }
         }
 
-        // المسار النسبي لخادم MySQL المحمول بالنسبة لمجلد Laravel
-        $portablePath = base_path('..' . DIRECTORY_SEPARATOR . 'server' . DIRECTORY_SEPARATOR . 'mysql' . DIRECTORY_SEPARATOR . 'bin');
+        // 2. فحص بيئة العميل المحمولة (نسبية للمشروع: ../server/mysql/bin)
+        $portablePath = dirname(base_path()) . DIRECTORY_SEPARATOR . 'server' . DIRECTORY_SEPARATOR . 'mysql' . DIRECTORY_SEPARATOR . 'bin';
         if (File::isDirectory($portablePath)) {
-            return realpath($portablePath);
+            $exe = $portablePath . DIRECTORY_SEPARATOR . (PHP_OS_FAMILY === 'Windows' ? 'mysqldump.exe' : 'mysqldump');
+            if (File::exists($exe)) {
+                return realpath($portablePath);
+            }
         }
 
+        // 3. فحص بيئة التطوير المحلية WampServer على ويندوز تلقائياً
+        if (PHP_OS_FAMILY === 'Windows') {
+            $wampMysqlRoot = 'C:\wamp64\bin\mysql';
+            if (File::isDirectory($wampMysqlRoot)) {
+                $versions = File::directories($wampMysqlRoot);
+                if (!empty($versions)) {
+                    // اختيار أحدث إصدار MySQL مثبت داخل WAMP
+                    rsort($versions);
+                    $wampBin = $versions[0] . DIRECTORY_SEPARATOR . 'bin';
+                    if (File::exists($wampBin . DIRECTORY_SEPARATOR . 'mysqldump.exe')) {
+                        return realpath($wampBin);
+                    }
+                }
+            }
+        }
+
+        // 4. خوادم Linux أو الأنظمة التي تملك MySQL في الـ PATH العام
         return null;
+    }
+
+    /**
+     * تأمين تمرير متغيرات بيئة نظام ويندوز الأساسية (خاصة SystemRoot و windir)
+     * لمنع انهيار مآخذ Winsock برمز الخطأ 10106
+     */
+    protected function ensureSystemEnvironment(): array
+    {
+        if (PHP_OS_FAMILY !== 'Windows') {
+            return [];
+        }
+
+        $systemRoot = getenv('SystemRoot') ?: (getenv('windir') ?: 'C:\Windows');
+        $windir     = getenv('windir') ?: $systemRoot;
+        $path       = getenv('PATH') ?: "{$systemRoot}\\system32;{$systemRoot};{$systemRoot}\\System32\\Wbem";
+        $temp       = getenv('TEMP') ?: (getenv('TMP') ?: "{$systemRoot}\\Temp");
+
+        // إذا تم اكتشاف مسار MySQL، ندمجه ديناميكياً في بيئة التنفيذ الحالية
+        if ($binPath = $this->getBinaryPath()) {
+            $path = "{$binPath};{$path}";
+        }
+
+        $envVars = [
+            'SystemRoot'  => $systemRoot,
+            'SYSTEMROOT'  => $systemRoot,
+            'windir'      => $windir,
+            'WINDIR'      => $windir,
+            'PATH'        => $path,
+            'TEMP'        => $temp,
+            'TMP'         => $temp,
+            'SystemDrive' => getenv('SystemDrive') ?: 'C:',
+            'ComSpec'     => getenv('ComSpec') ?: "{$systemRoot}\\system32\\cmd.exe",
+        ];
+
+        foreach ($envVars as $key => $value) {
+            $_ENV[$key] = $value;
+            $_SERVER[$key] = $value;
+            putenv("{$key}={$value}");
+        }
+
+        return $envVars;
     }
 
     /**
@@ -57,35 +126,31 @@ class OnlineBackupService
         return 'mysql';
     }
 
-    /**
-     * جلب اسم قاعدة البيانات الحالية ديناميكياً من الإعدادات
-     */
     protected function getDatabaseName(): string
     {
         $connection = config('database.default');
         return config("database.connections.{$connection}.database") ?? 'database';
     }
 
-    /**
-     * جلب المنطقة الزمنية المحددة للنسخ الاحتياطي من ملف الـ .env أو افتراض توقيت التطبيق
-     */
     protected function getBackupTimezone(): string
     {
         return env('BACKUP_TIMEZONE', config('app.timezone', 'UTC'));
     }
 
     /**
-     * إنشاء نسخة احتياطية جديدة مضغوطة وآمنة تماماً باسم قاعدة البيانات والتوقيت المحلي للمشروع
+     * إنشاء نسخة احتياطية جديدة
      */
     public function generateBackup(): array
     {
+        $this->ensureSystemEnvironment();
+
         $connection = config('database.default');
         if ($connection !== 'mysql') {
             throw new Exception('هذه الخدمة مخصصة حصرياً لقواعد بيانات MySQL.');
         }
 
         $dbConfig = config("database.connections.{$connection}");
-        $dbName = $dbConfig['database'];
+        $dbName   = $dbConfig['database'];
 
         if (!File::exists($this->backupPath)) {
             File::makeDirectory($this->backupPath, 0755, true, true);
@@ -95,13 +160,11 @@ class OnlineBackupService
             File::makeDirectory($this->tempPath, 0755, true, true);
         }
 
-        // استخدام المنطقة الزمنية المحلية المحددة في الـ .env لتوليد الطابع الزمني بالصيغة المريحة للعين
-        $timezone = $this->getBackupTimezone();
-        $timestamp = now($timezone)->format('Y-m-d_H\hi\ms\s'); // مثال: 2026-07-15_15h20m11s
-        $fileName = "{$dbName}_{$timestamp}.sql.gz";
+        $timezone  = $this->getBackupTimezone();
+        $timestamp = now($timezone)->format('Y-m-d_H\hi\ms\s');
+        $fileName  = "{$dbName}_{$timestamp}.sql.gz";
         $finalPath = $this->backupPath . DIRECTORY_SEPARATOR . $fileName;
 
-        // توليد ملف سيكوال مؤقت غير مضغوط أولاً لحماية الذاكرة
         $tempSqlFile = $this->tempPath . DIRECTORY_SEPARATOR . "temp_dump_{$timestamp}.sql";
 
         try {
@@ -110,31 +173,28 @@ class OnlineBackupService
                 ->setUserName($dbConfig['username'])
                 ->setPassword($dbConfig['password'] ?? '')
                 ->setHost($dbConfig['host'] ?? '127.0.0.1')
-                ->setPort($dbConfig['port'] ?? 3306)
-                ->addExtraOption('--single-transaction') // منع قفل الجداول أثناء عمل موظفي الحسابات
+                ->setPort((int) ($dbConfig['port'] ?? 3306))
+                ->addExtraOption('--single-transaction')
                 ->addExtraOption('--skip-lock-tables')
-                ->addExtraOption('--quick'); // سحب البيانات سطر بسطر لتقليل الضغط على الذاكرة
+                ->addExtraOption('--quick');
 
-            // تمرير مسار مجلد mysqldump.exe في حالة وجود السيرفر المحمول
             if ($binPath = $this->getBinaryPath()) {
                 $dumper->setDumpBinaryPath($binPath);
             }
 
             $dumper->dumpToFile($tempSqlFile);
 
-            // ضغط الملف يدوياً عبر PHP لضمان أقصى حماية واستقرار
             $this->gzipFile($tempSqlFile, $finalPath);
             File::delete($tempSqlFile);
 
-            // تشغيل التدوير التلقائي للاحتفاظ بـ 50 نسخة فقط تخص قاعدة البيانات هذه
             $this->rotateBackups();
 
             return [
-                'success' => true,
+                'success'  => true,
                 'filename' => $fileName,
-                'path' => $finalPath,
-                'size' => $this->formatSize(File::size($finalPath)),
-                'date' => now($timezone)->format('Y-m-d H:i:s')
+                'path'     => $finalPath,
+                'size'     => $this->formatSize(File::size($finalPath)),
+                'date'     => now($timezone)->format('Y-m-d H:i:s'),
             ];
         } catch (Exception $e) {
             if (File::exists($tempSqlFile)) {
@@ -145,11 +205,13 @@ class OnlineBackupService
     }
 
     /**
-     * استعادة قاعدة البيانات مع شبكة أمان الطوارئ التلقائية المخصصة
+     * استعادة قاعدة البيانات
      */
     public function restoreBackup(string $fileName): array
     {
-        $fileName = basename($fileName); // تأمين ضد ثغرة تخطي المسارات
+        $this->ensureSystemEnvironment();
+
+        $fileName   = basename($fileName);
         $sourcePath = $this->backupPath . DIRECTORY_SEPARATOR . $fileName;
 
         if (!File::exists($sourcePath)) {
@@ -157,78 +219,64 @@ class OnlineBackupService
         }
 
         $connection = config('database.default');
-        $dbConfig = config("database.connections.{$connection}");
+        $dbConfig   = config("database.connections.{$connection}");
 
-        // 1. أخذ نسخة أمان لحظية (طوارئ) مخصصة باسم قاعدة البيانات قبل لمس أي جدول
         $this->generateEmergencyBackup($dbConfig);
 
         $tempSqlFile = $this->tempPath . DIRECTORY_SEPARATOR . 'temp_restore_extract.sql';
 
         try {
-            // 2. فك ضغط الملف المستهدف إلى المجلد المؤقت
             if (!File::exists($this->tempPath)) {
                 File::makeDirectory($this->tempPath, 0755, true, true);
             }
             $this->gunzipFile($sourcePath, $tempSqlFile);
 
-            // 3. تفريغ قاعدة البيانات الحالية بالكامل (حذف نظيف وآمن للجداول والـ Views)
             $this->dropAllTables($dbConfig['database']);
 
-            // 4. محاولة تنفيذ الاستيراد عبر تقنية الاستيراد الهجين (Hybrid Import Engine)
             try {
                 $this->executeMysqlImport($dbConfig, $tempSqlFile);
             } catch (Exception $ex) {
-                // إذا فشلت أدوات النظام، نتحول فوراً للمفسر البرمجي الداخلي المستقر
                 $this->executePdoImport($tempSqlFile);
             }
 
-            // تنظيف الملفات المؤقتة وحذف نسخة الطوارئ لنجاح العملية بنسبة 100%
             File::delete($tempSqlFile);
             $this->clearEmergencyBackup();
 
             return [
                 'success' => true,
-                'message' => 'تمت استعادة قاعدة البيانات بنجاح تام وبشكل متكامل.'
+                'message' => 'تمت استعادة قاعدة البيانات بنجاح تام وبشكل متكامل.',
             ];
         } catch (Exception $e) {
-            // تنظيف الملف المؤقت المصاب
             if (File::exists($tempSqlFile)) {
                 File::delete($tempSqlFile);
             }
 
-            // 5. خط الدفاع الحاسم: استدعاء التراجع التلقائي من ملف الطوارئ
             $this->rollbackEmergency($dbConfig);
 
-            throw new Exception('فشلت عملية الاستعادة لخطأ فني، وتم التراجع تلقائياً وإعادة النظام لحالته السليمة السابقة لضمان سلامة بياناتك: ' . $e->getMessage());
+            throw new Exception('فشلت عملية الاستعادة لخطأ فني، وتم التراجع تلقائياً وإعادة النظام لحالته السليمة: ' . $e->getMessage());
         }
     }
 
-    /**
-     * جلب قائمة كافة النسخ الاحتياطية المتوفرة المفلترة بقاعدة البيانات والمنطقة الزمنية المحلية
-     */
     public function getBackupsList(): array
     {
-        $backups = [];
-        $dbName = $this->getDatabaseName();
-        $prefix = "{$dbName}_";
+        $backups  = [];
+        $dbName   = $this->getDatabaseName();
+        $prefix   = "{$dbName}_";
         $timezone = $this->getBackupTimezone();
 
         if (File::exists($this->backupPath)) {
             $files = File::files($this->backupPath);
             foreach ($files as $file) {
-                // فلترة دقيقة تضمن جلب الملفات التي تبدأ باسم قاعدة البيانات الحالية فقط
                 if ($file->getExtension() === 'gz' && str_starts_with($file->getFilename(), $prefix)) {
                     $backups[] = [
                         'name' => $file->getFilename(),
                         'size' => $this->formatSize($file->getSize()),
-                        // عرض وقت الإنشاء في الجدول بالتوقيت المحلي المختار بدلاً من توقيت السيرفر الافتراضي
-                        'date' => now($timezone)->setTimestamp($file->getMTime())->format('Y-m-d H:i:s')
+                        'date' => now($timezone)->setTimestamp($file->getMTime())->format('Y-m-d H:i:s'),
                     ];
                 }
             }
         }
 
-        // ترتيب تنازلي (النسخ الأحدث أولاً)
         usort($backups, function ($a, $b) {
             return strcmp($b['date'], $a['date']);
         });
@@ -236,9 +284,6 @@ class OnlineBackupService
         return $backups;
     }
 
-    /**
-     * تدمير ملف نسخة احتياطية من القرص
-     */
     public function deleteBackup(string $fileName): bool
     {
         $fileName = basename($fileName);
@@ -251,38 +296,32 @@ class OnlineBackupService
         return false;
     }
 
-    /**
-     * توليد رابط تحميل موقع مؤقتاً لتأمين عمليات السحب الخارجي لجهاز العميل
-     */
     public function generateDownloadUrl(string $fileName): string
     {
         return URL::temporarySignedRoute(
             'backups.download',
             now()->addMinutes(2),
             ['file_name' => $fileName],
-            false // <--- جعل الرابط نسبياً (Relative) يتجاهل الـ Host والـ Protocol
+            false
         );
     }
 
-    /**
-     * إدارة تدوير الملفات للاحتفاظ بـ 50 نسخة فقط وحذف الأقدم لقاعدة البيانات الحالية حصرياً
-     */
     protected function rotateBackups(): void
     {
         if (!File::exists($this->backupPath)) {
             return;
         }
 
-        $files = File::files($this->backupPath);
+        $files       = File::files($this->backupPath);
         $backupFiles = [];
-        $dbName = $this->getDatabaseName();
-        $prefix = "{$dbName}_";
+        $dbName      = $this->getDatabaseName();
+        $prefix      = "{$dbName}_";
 
         foreach ($files as $file) {
             if ($file->getExtension() === 'gz' && str_starts_with($file->getFilename(), $prefix)) {
                 $backupFiles[] = [
-                    'path' => $file->getPathname(),
-                    'mtime' => $file->getMTime()
+                    'path'  => $file->getPathname(),
+                    'mtime' => $file->getMTime(),
                 ];
             }
         }
@@ -299,12 +338,10 @@ class OnlineBackupService
         }
     }
 
-    /**
-     * استيراد قاعدة البيانات عبر سطر الأوامر بنمط آمن ومعزول تماماً
-     */
     protected function executeMysqlImport(array $dbConfig, string $filePath): void
     {
-        $mysqlBin = $this->getMysqlExecutable();
+        $mysqlBin  = $this->getMysqlExecutable();
+        $systemEnv = $this->ensureSystemEnvironment();
 
         $command = [
             $mysqlBin,
@@ -312,12 +349,12 @@ class OnlineBackupService
             '-P', (string) ($dbConfig['port'] ?? 3306),
             '-u', (string) $dbConfig['username'],
             '--execute=source ' . $filePath,
-            (string) $dbConfig['database']
+            (string) $dbConfig['database'],
         ];
 
-        $process = new Process($command, null, [
-            'MYSQL_PWD' => (string) ($dbConfig['password'] ?? '')
-        ]);
+        $process = new Process($command, null, array_merge($systemEnv, [
+            'MYSQL_PWD' => (string) ($dbConfig['password'] ?? ''),
+        ]));
 
         $process->setTimeout(300);
         $process->run();
@@ -327,9 +364,6 @@ class OnlineBackupService
         }
     }
 
-    /**
-     * مفسر استيراد داخلي احتياطي يعمل عبر PDO لضمان الدعم الكامل في حال قيود السيرفر
-     */
     protected function executePdoImport(string $filePath): void
     {
         $file = fopen($filePath, 'r');
@@ -359,12 +393,9 @@ class OnlineBackupService
         fclose($file);
     }
 
-    /**
-     * تفريغ قاعدة البيانات بالكامل (Drop Tables & Views) بشكل آمن
-     */
     protected function dropAllTables(string $dbName): void
     {
-        $tables = DB::select('SHOW FULL TABLES');
+        $tables  = DB::select('SHOW FULL TABLES');
         $colName = "Tables_in_{$dbName}";
 
         DB::statement('SET FOREIGN_KEY_CHECKS = 0');
@@ -381,13 +412,10 @@ class OnlineBackupService
         DB::statement('SET FOREIGN_KEY_CHECKS = 1');
     }
 
-    /**
-     * ضغط الملف بنظام دفق Chunks لحفظ استهلاك ذاكرة السيرفر
-     */
     protected function gzipFile(string $source, string $destination): void
     {
         $fpOut = gzopen($destination, 'wb9');
-        $fpIn = fopen($source, 'rb');
+        $fpIn  = fopen($source, 'rb');
 
         if ($fpOut === false || $fpIn === false) {
             throw new Exception('فشل في فتح قنوات البيانات لضغط الملف.');
@@ -401,13 +429,10 @@ class OnlineBackupService
         gzclose($fpOut);
     }
 
-    /**
-     * فك ضغط ملفات .sql.gz بنظام دفق Chunks لحفظ استهلاك الذاكرة
-     */
     protected function gunzipFile(string $source, string $destination): void
     {
         $fpOut = fopen($destination, 'wb');
-        $fpIn = gzopen($source, 'rb');
+        $fpIn  = gzopen($source, 'rb');
 
         if ($fpOut === false || $fpIn === false) {
             throw new Exception('فشل في فتح قنوات البيانات لفك ضغط الملف.');
@@ -421,14 +446,13 @@ class OnlineBackupService
         gzclose($fpOut);
     }
 
-    /**
-     * توليد نسخة الطوارئ اللحظية السريعة قبل الاستعادة مخصصة باسم قاعدة البيانات
-     */
     protected function generateEmergencyBackup(array $dbConfig): void
     {
-        $dbName = $dbConfig['database'];
+        $this->ensureSystemEnvironment();
+
+        $dbName        = $dbConfig['database'];
         $emergencyFile = $this->backupPath . DIRECTORY_SEPARATOR . "EMERGENCY_ROLLBACK_{$dbName}.sql.gz";
-        $tempSql = $this->tempPath . DIRECTORY_SEPARATOR . "temp_emergency_{$dbName}.sql";
+        $tempSql       = $this->tempPath . DIRECTORY_SEPARATOR . "temp_emergency_{$dbName}.sql";
 
         if (!File::exists($this->tempPath)) {
             File::makeDirectory($this->tempPath, 0755, true, true);
@@ -439,7 +463,7 @@ class OnlineBackupService
             ->setUserName($dbConfig['username'])
             ->setPassword($dbConfig['password'] ?? '')
             ->setHost($dbConfig['host'] ?? '127.0.0.1')
-            ->setPort($dbConfig['port'] ?? 3306)
+            ->setPort((int) ($dbConfig['port'] ?? 3306))
             ->addExtraOption('--single-transaction')
             ->addExtraOption('--skip-lock-tables')
             ->addExtraOption('--quick');
@@ -454,12 +478,11 @@ class OnlineBackupService
         File::delete($tempSql);
     }
 
-    /**
-     * تنفيذ التراجع التلقائي من ملف الطوارئ المخصص في حال الكوارث
-     */
     protected function rollbackEmergency(array $dbConfig): void
     {
-        $dbName = $dbConfig['database'];
+        $this->ensureSystemEnvironment();
+
+        $dbName        = $dbConfig['database'];
         $emergencyFile = $this->backupPath . DIRECTORY_SEPARATOR . "EMERGENCY_ROLLBACK_{$dbName}.sql.gz";
         if (!File::exists($emergencyFile)) {
             return;
@@ -480,16 +503,13 @@ class OnlineBackupService
             File::delete($tempEmergencySql);
             File::delete($emergencyFile);
         } catch (Exception $criticalError) {
-            logger()->critical("فشل حرج: تعذر استعادة نسخة الطوارئ التلقائية لقاعدة البيانات {$dbName} بعد فشل الاستعادة الأساسي! التفاصيل: " . $criticalError->getMessage());
+            logger()->critical("فشل حرج: تعذر استعادة نسخة الطوارئ التلقائية لقاعدة البيانات {$dbName}! التفاصيل: " . $criticalError->getMessage());
         }
     }
 
-    /**
-     * مسح نسخة الطوارئ المخصصة لقاعدة البيانات الحالية
-     */
     protected function clearEmergencyBackup(): void
     {
-        $dbName = $this->getDatabaseName();
+        $dbName        = $this->getDatabaseName();
         $emergencyFile = $this->backupPath . DIRECTORY_SEPARATOR . "EMERGENCY_ROLLBACK_{$dbName}.sql.gz";
         if (File::exists($emergencyFile)) {
             File::delete($emergencyFile);

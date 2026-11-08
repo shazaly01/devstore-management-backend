@@ -1,0 +1,1 @@
+import{D as t}from"./index-BtCSd6Np.js";const s="/import",e={importCustomers(r){return t.post(`${s}/customers`,{customers:r})},importSuppliers(r){return t.post(`${s}/suppliers`,{suppliers:r})},importItems(r){return t.post(`${s}/items`,{items:r})}};export{e as i};

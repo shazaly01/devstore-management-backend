@@ -15,6 +15,7 @@ use App\Models\Treasury;
 use App\Models\Bank;
 use App\Services\StockMovementService;
 use App\Services\JournalEntryService;
+use App\Services\LicenseService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
@@ -24,11 +25,16 @@ class PurchaseService
 {
     protected $stockService;
     protected $journalService;
+    protected $licenseService;
 
-    public function __construct(StockMovementService $stockService, JournalEntryService $journalService)
-    {
+    public function __construct(
+        StockMovementService $stockService,
+        JournalEntryService $journalService,
+        LicenseService $licenseService
+    ) {
         $this->stockService = $stockService;
         $this->journalService = $journalService;
+        $this->licenseService = $licenseService;
     }
 
     /**
@@ -36,6 +42,9 @@ class PurchaseService
      */
     public function createPurchase(array $data, int $userId): Purchase
     {
+        // فحص صلاحية الترخيص ومنع الإضافة أثناء وضع القراءة فقط
+        $this->licenseService->ensureActiveLicense();
+
         return DB::transaction(function () use ($data, $userId) {
 
             $purchaseData = array_merge($data, ['user_id' => $userId]);
@@ -111,6 +120,9 @@ class PurchaseService
      */
     public function updatePurchase(Purchase $purchase, array $data): Purchase
     {
+        // فحص صلاحية الترخيص ومنع التعديل أثناء وضع القراءة فقط
+        $this->licenseService->ensureActiveLicense();
+
         return DB::transaction(function () use ($purchase, $data) {
 
             $this->stockService->clearDocumentMovements($purchase->invoice_number);
@@ -197,6 +209,9 @@ class PurchaseService
      */
     public function deletePurchase(Purchase $purchase): void
     {
+        // فحص صلاحية الترخيص ومنع الحذف أثناء وضع القراءة فقط
+        $this->licenseService->ensureActiveLicense();
+
         DB::transaction(function () use ($purchase) {
             $this->stockService->clearDocumentMovements($purchase->invoice_number);
 

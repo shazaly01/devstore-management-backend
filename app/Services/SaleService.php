@@ -16,6 +16,7 @@ use App\Models\ItemComponent;
 use App\Services\StockMovementService;
 use App\Services\JournalEntryService;
 use App\Services\InvoicePdfService;
+use App\Services\LicenseService;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use Exception;
@@ -25,15 +26,18 @@ class SaleService
     protected $stockService;
     protected $journalService;
     protected $pdfService;
+    protected $licenseService;
 
     public function __construct(
         StockMovementService $stockService,
         JournalEntryService $journalService,
-        InvoicePdfService $pdfService
+        InvoicePdfService $pdfService,
+        LicenseService $licenseService
     ) {
         $this->stockService = $stockService;
         $this->journalService = $journalService;
         $this->pdfService = $pdfService;
+        $this->licenseService = $licenseService;
     }
 
     /**
@@ -79,6 +83,9 @@ class SaleService
      */
     public function createSale(array $data, int $userId): Sale
     {
+        // فحص صلاحية الترخيص ومنع إنشاء المبيعات أثناء وضع القراءة فقط
+        $this->licenseService->ensureActiveLicense();
+
         return DB::transaction(function () use ($data, $userId) {
             $saleData = array_merge($data, ['user_id' => $userId]);
             $items = $saleData['items'];
@@ -179,6 +186,9 @@ class SaleService
      */
     public function updateSale(Sale $sale, array $data): Sale
     {
+        // فحص صلاحية الترخيص ومنع التعديل أثناء وضع القراءة فقط
+        $this->licenseService->ensureActiveLicense();
+
         return DB::transaction(function () use ($sale, $data) {
             // 1. إعادة ترصيد المخزون القديم لحساب الرصيد الحقيقي قبل التحقق
             $this->stockService->clearDocumentMovements($sale->invoice_number);
@@ -290,6 +300,9 @@ class SaleService
      */
     public function deleteSale(Sale $sale): void
     {
+        // فحص صلاحية الترخيص ومنع الحذف أثناء وضع القراءة فقط
+        $this->licenseService->ensureActiveLicense();
+
         DB::transaction(function () use ($sale) {
             $this->stockService->clearDocumentMovements($sale->invoice_number);
 
@@ -505,6 +518,9 @@ class SaleService
      */
     public function swapRawMaterials(Sale $sale, array $itemsData, string $productionStatus): Sale
     {
+        // فحص صلاحية الترخيص ومنع استبدال الخامات أثناء وضع القراءة فقط
+        $this->licenseService->ensureActiveLicense();
+
         return DB::transaction(function () use ($sale, $itemsData, $productionStatus) {
             $this->stockService->clearDocumentMovements($sale->invoice_number);
 

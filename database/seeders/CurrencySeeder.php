@@ -13,13 +13,7 @@ class CurrencySeeder extends Seeder
     public function run(): void
     {
         $currencies = [
-            [
-                'name'       => 'الجنيه السوداني',
-                'code'       => 'SDG',
-                'symbol'     => 'ج.س',
-                'is_default' => true,
-                'is_active'  => true,
-            ],
+           
             [
                 'name'       => 'الدولار الأمريكي',
                 'code'       => 'USD',
