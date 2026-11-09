@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Item;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class StoreItemRequest extends FormRequest
 {
@@ -21,7 +22,12 @@ class StoreItemRequest extends FormRequest
     {
         return [
             // البيانات الأساسية للصنف
-            'name'                                 => ['required', 'string', 'max:255'],
+            'name'                                 => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('items', 'name')->whereNull('deleted_at'),
+            ],
             'item_type'                            => ['required', 'in:product,service,raw_material'],
             'profit_margin'                        => ['nullable', 'numeric', 'min:0', 'max:100'],
             'purchase_currency_id'                 => ['nullable', 'exists:currencies,id'],
@@ -67,6 +73,7 @@ class StoreItemRequest extends FormRequest
     {
         return [
             'name.required'                            => 'اسم الصنف أو الخدمة مطلوب ولا يمكن تركه فارغاً.',
+            'name.unique'                              => 'اسم الصنف أو الخدمة مسجل مسبقاً بالنظام ولا يمكن تكراره.',
             'item_type.required'                       => 'طبيعة الصنف مطلوبة (منتج، خدمة، أو مادة خام).',
             'item_type.in'                             => 'طبيعة الصنف الممررة غير صحيحة.',
             'profit_margin.numeric'                    => 'يجب أن تكون نسبة الربح قيمة رقمية.',

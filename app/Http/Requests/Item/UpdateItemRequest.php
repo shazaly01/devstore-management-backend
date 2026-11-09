@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Item;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateItemRequest extends FormRequest
 {
@@ -19,13 +20,18 @@ class UpdateItemRequest extends FormRequest
      */
     public function rules(): array
     {
-        // جلب كائن أو معرف الصنف الحالي بأمان من المسار (Route) لتخطي تكرار الباركود الخاص به
+        // جلب كائن أو معرف الصنف الحالي بأمان من المسار (Route) لتخطي تكرار الباركود والاسم الخاص به
         $item = $this->route('item');
         $itemId = $item instanceof \App\Models\Item ? $item->id : $item;
 
         return [
             // البيانات الأساسية المحدثة للصنف
-            'name'                                 => ['required', 'string', 'max:255'],
+            'name'                                 => [
+                'required',
+                'string',
+                'max:255',
+                Rule::unique('items', 'name')->ignore($itemId)->whereNull('deleted_at'),
+            ],
             'item_type'                            => ['required', 'in:product,service,raw_material'],
             'profit_margin'                        => ['nullable', 'numeric', 'min:0', 'max:100'],
             'purchase_currency_id'                 => ['nullable', 'exists:currencies,id'],
@@ -75,6 +81,7 @@ class UpdateItemRequest extends FormRequest
     {
         return [
             'name.required'                            => 'اسم الصنف أو الخدمة مطلوب لتحديث البيانات ولا يمكن تركه فارغاً.',
+            'name.unique'                              => 'اسم الصنف أو الخدمة مسجل مسبقاً لصنف آخر في النظام ولا يمكن تكراره.',
             'item_type.required'                       => 'طبيعة الصنف مطلوبة (منتج، خدمة، أو مادة خام).',
             'item_type.in'                             => 'طبيعة الصنف الممررة غير صحيحة.',
             'profit_margin.numeric'                    => 'يجب أن تكون نسبة الربح قيمة رقمية.',
