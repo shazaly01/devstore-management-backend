@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Role\StoreRoleRequest;
 use App\Http\Requests\Role\UpdateRoleRequest;
-use App\Http\Resources\Api\PermissionResource;
 use App\Http\Resources\Api\RoleResource;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
@@ -17,7 +16,6 @@ class RoleController extends Controller
     public function __construct()
     {
         // استخدام authorizeResource لتطبيق الـ Policy تلقائيًا
-        // نحتاج إلى تحديد 'parameter' لأن Laravel تتوقع 'role' ونحن نستخدم 'role'
         $this->authorizeResource(Role::class, 'role');
     }
 
@@ -34,7 +32,7 @@ class RoleController extends Controller
         DB::beginTransaction();
         try {
             $role = Role::create(['name' => $validated['name'], 'guard_name' => 'api']);
-            $role->syncPermissions($validated['permissions']);
+            $role->syncPermissions($validated['permissions'] ?? []);
             DB::commit();
 
             return new RoleResource($role->load('permissions'));
@@ -59,7 +57,6 @@ class RoleController extends Controller
             $role->update(['name' => $validated['name']]);
 
             // 2. التحقق الصارم: يتم تحديث الصلاحيات فقط إذا كانت متواجدة في الطلب المرسل
-            // هذا يمنع الخطأ ويمنع مسح الصلاحيات القديمة عند تعديل الاسم بمفرده
             if (array_key_exists('permissions', $validated)) {
                 $role->syncPermissions($validated['permissions'] ?? []);
             }
@@ -75,36 +72,62 @@ class RoleController extends Controller
 
     public function destroy(Role $role)
     {
-        // 1. استدعاء الـ Policy للتحقق من الصلاحية
         $this->authorize('delete', $role);
 
-        // --- بداية التعديل: إعادة قاعدة العمل ---
-        // 2. التحقق من قاعدة العمل (يتم تنفيذها دائمًا بعد التحقق من الصلاحية)
         if (in_array($role->name, ['Super Admin', 'Admin', 'User'])) {
-            // استخدام abort helper function هو الأنسب هنا
             abort(Response::HTTP_FORBIDDEN, 'Cannot delete default roles.');
         }
-        // --- نهاية التعديل ---
 
-        // 3. تنفيذ الحذف إذا تم تجاوز كل عمليات التحقق
         $role->delete();
 
         return response()->noContent();
     }
 
     /**
-     * Get all available permissions.
-     * هذه الدالة لا يتم حمايتها بـ authorizeResource، لذا نضيف الصلاحية يدويًا
+     * جلب كافة الصلاحيات مهيكلة حسب الموديولات للواجهة الأمامية
+     * دون أي تعديل على جدول الصلاحيات في قاعدة البيانات.
      */
     public function getAllPermissions()
     {
         $this->authorize('viewAny', Role::class);
 
-        // 1. قاموس الترجمة للمجموعات الأساسية
+        // 1. تعريف موديولات القائمة الجانبية وترتيب ظهورها
+        $modulesConfig = [
+            'system' => [
+                'display_name' => 'لوحة التحكم والنظام',
+                'groups'       => ['dashboard', 'user', 'role', 'company', 'setting', 'backup'],
+            ],
+            'sales' => [
+                'display_name' => 'المبيعات والعملاء',
+                'groups'       => ['sale', 'customer', 'pricing'],
+            ],
+            'purchasing' => [
+                'display_name' => 'المشتريات والموردون',
+                'groups'       => ['purchase', 'supplier'],
+            ],
+            'inventory' => [
+                'display_name' => 'المخازن والأصناف',
+                'groups'       => ['store', 'category', 'unit', 'item', 'disassembly', 'opening_stock', 'stock_adjustment'],
+            ],
+            'accounting' => [
+                'display_name' => 'الحسابات والمالية',
+                'groups'       => ['account', 'treasury', 'bank', 'voucher', 'expense', 'journal_entry'],
+            ],
+            'hr' => [
+                'display_name' => 'الموارد البشرية',
+                'groups'       => ['employee'],
+            ],
+            'reports' => [
+                'display_name' => 'التقارير والرقابة',
+                'groups'       => ['report'],
+            ],
+        ];
+
+        // 2. قاموس ترجمة الشاشات والمجموعات
         $groupTranslations = [
             'dashboard'        => 'لوحة التحكم',
             'user'             => 'المستخدمون',
-            'role'             => 'الأدوار الصلاحية',
+            'role'             => 'الأدوار والصلاحيات',
             'company'          => 'الشركات',
             'setting'          => 'الإعدادات العامة',
             'backup'           => 'النسخ الاحتياطي',
@@ -112,14 +135,17 @@ class RoleController extends Controller
             'unit'             => 'وحدات القياس',
             'store'            => 'المخازن والمستودعات',
             'item'             => 'دليل الأصناف والخدمات',
+            'disassembly'      => 'تفكيك وتجزئة الأصناف',
             'customer'         => 'إدارة العملاء',
             'supplier'         => 'إدارة الموردين',
+            'employee'         => 'إدارة الموظفين',
             'account'          => 'شجرة الحسابات',
             'treasury'         => 'الخزائن المالية',
             'bank'             => 'الحسابات البنكية',
             'expense'          => 'بنود المصروفات',
             'purchase'         => 'فواتير المشتريات',
             'sale'             => 'فواتير المبيعات',
+            'pricing'          => 'سياسات التسعير والعملات',
             'voucher'          => 'سندات القبض والصرف',
             'stock_adjustment' => 'التسويات الجردية',
             'opening_stock'    => 'بضاعة أول المدة',
@@ -127,61 +153,106 @@ class RoleController extends Controller
             'report'           => 'قسم التقارير الموحد',
         ];
 
-        // [تعديل جوهري]: إضافة مفاتيح الإجراءات المحدثة للتقارير لضمان مطابقتها وعدم حجبها
+        // 3. قاموس ترجمة الإجراءات القياسية والخاصة والتقارير
         $actionTranslations = [
-            'view'               => 'عرض',
-            'create'             => 'إنشاء',
-            'update'             => 'تعديل',
-            'delete'             => 'حذف',
-            'swap_raw_materials' => 'ملاءمة خامات الورشة',
-            'manager'            => 'إشراف المدير',
-            'financial'          => 'المالية',
-            'inventory'          => 'المخزنية',
-            'account_statement'  => 'كشف الحساب الرئيسي',
-            'sub_ledger'         => 'كشف الحساب المساعد',
-            'trial_balance'      => 'ميزان المراجعة',
-            'download'           => 'تحميل',  // <--- تم تفعيلها لضمان بناء الصلاحية في الكتالوج
-            'restore'            => 'استعادة', // <--- تم تفعيلها لضمان ظهور زر الاستعادة في الكتالوج
+            'view'                  => 'عرض',
+            'create'                => 'إضافة',
+            'update'                => 'تعديل',
+            'delete'                => 'حذف',
+            'print'                 => 'طباعة',
+            'approve'               => 'اعتماد',
+            'post'                  => 'ترحيل',
+            'export'                => 'تصدير',
+            'swap_raw_materials'    => 'ملاءمة خامات الورشة',
+            'manager'               => 'إشراف المدير',
+            'bulk-reprice'          => 'إعادة التسعير الجماعي',
+            'view-radar'            => 'رادار تآكل الهوامش',
+            'rollback'              => 'التراجع عن دفعات الأسعار',
+            'manage-exchange-rates' => 'إدارة أسعار الصرف',
+            'financial'             => 'التقارير المالية الإدارية',
+            'inventory'             => 'التقارير المخزنية الإدارية',
+            'account_statement'     => 'كشف الحساب الرئيسي',
+            'sub_ledger'            => 'كشف الحساب المساعد',
+            'trial_balance'         => 'ميزان المراجعة',
+            'download'              => 'تحميل',
+            'restore'               => 'استعادة',
         ];
 
-        // 2. جلب كل الصلاحيات وتجميعها حسب المجموعة
-        $permissions = Permission::where('guard_name', 'api')->get()->groupBy(function ($permission) {
-            return explode('.', $permission->name)[0];
-        });
+        // خريطة عكسية سريعة لمعرفة الموديول التابع له كل groupKey
+        $groupToModuleMap = [];
+        foreach ($modulesConfig as $modKey => $config) {
+            foreach ($config['groups'] as $grp) {
+                $groupToModuleMap[$grp] = $modKey;
+            }
+        }
 
-        // 3. بناء هيكل المجموعات (groups)
-        $structuredGroups = [];
-        foreach ($permissions as $groupKey => $permissionGroup) {
-            $groupPermissions = [];
-            foreach ($permissionGroup as $p) {
-                $actionKey = explode('.', $p->name)[1];
-                // تأكد من أن الإجراء موجود في قاموس الترجمة قبل إضافته لمنع الـ Crash
-                if (array_key_exists($actionKey, $actionTranslations)) {
-                    $groupPermissions[] = [
-                        'id' => $p->id,
-                        'action' => $actionKey,
+        // 4. جلب كافة صلاحيات الـ API وتجميعها حسب الشاشة (groupKey)
+        $allPermissions = Permission::where('guard_name', 'api')->orderBy('id')->get();
+        $groupedByScreen = [];
+
+        foreach ($allPermissions as $permission) {
+            $parts = explode('.', $permission->name, 2);
+            $groupKey = count($parts) === 2 ? $parts[0] : 'general';
+            $actionKey = count($parts) === 2 ? $parts[1] : $permission->name;
+
+            $groupedByScreen[$groupKey][] = [
+                'id'             => $permission->id,
+                'name'           => $permission->name,
+                'action'         => $actionKey,
+                'action_display' => $actionTranslations[$actionKey] ?? $actionKey,
+            ];
+        }
+
+        // 5. بناء شجرة الموديولات النهائية
+        $structuredModules = [];
+
+        foreach ($modulesConfig as $modKey => $config) {
+            $moduleGroups = [];
+
+            foreach ($config['groups'] as $groupKey) {
+                if (!empty($groupedByScreen[$groupKey])) {
+                    $moduleGroups[] = [
+                        'key'          => $groupKey,
+                        'display_name' => $groupTranslations[$groupKey] ?? $groupKey,
+                        'permissions'  => $groupedByScreen[$groupKey],
                     ];
+                    unset($groupedByScreen[$groupKey]);
                 }
             }
 
-            // أضف المجموعة فقط إذا كانت تحتوي على صلاحيات
-            if (!empty($groupPermissions)) {
-                $structuredGroups[] = [
-                    'key' => $groupKey,
-                    'display_name' => $groupTranslations[$groupKey] ?? $groupKey,
-                    'permissions' => $groupPermissions,
+            if (!empty($moduleGroups)) {
+                $structuredModules[] = [
+                    'key'          => $modKey,
+                    'display_name' => $config['display_name'],
+                    'groups'       => $moduleGroups,
                 ];
             }
         }
 
-        // 4. بناء هيكل الإجراءات (actions)
+        // 6. احتواء تلقائي لأي صلاحيات إضافية في الإنتاج غير مدرجة في الخريطة أعلاه
+        if (!empty($groupedByScreen)) {
+            $otherGroups = [];
+            foreach ($groupedByScreen as $groupKey => $perms) {
+                $otherGroups[] = [
+                    'key'          => $groupKey,
+                    'display_name' => $groupTranslations[$groupKey] ?? $groupKey,
+                    'permissions'  => $perms,
+                ];
+            }
+
+            $structuredModules[] = [
+                'key'          => 'other',
+                'display_name' => 'صلاحيات إضافية',
+                'groups'       => $otherGroups,
+            ];
+        }
+
         $allActions = collect($actionTranslations)->map(function ($displayName, $key) {
-            return ['key' => $key, 'display_name' => $displayName];
+            return ['key' => $key, 'display' => $displayName];
         })->values();
 
-        // 5. إرجاع الاستجابة النهائية للـ API
         return response()->json([
-            'groups' => $structuredGroups,
+            'modules' => $structuredModules,
             'actions' => $allActions,
         ]);
     }
