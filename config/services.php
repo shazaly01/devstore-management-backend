@@ -42,7 +42,7 @@ return [
         'sender_id' => env('RASAEL_SENDER_ID'),
     ],
 
-  'deepseek' => [
+    'deepseek' => [
         'key' => env('DEEPSEEK_API_KEY'),
         'url' => env('DEEPSEEK_API_URL', 'https://api.deepseek.com/chat/completions'),
     ],
@@ -53,9 +53,10 @@ return [
         'admin_phone' => env('WHATSAPP_ADMIN_PHONE'),
     ],
 
-
+    // --- إعدادات النسخ الاحتياطي الطارئ للإكسيل (الأوفلاين) ---
     'emergency_backup' => [
-    'enabled' => env('ENABLE_EMERGENCY_EXCEL_BACKUP', false),
+        'enabled'     => env('ENABLE_EMERGENCY_EXCEL_BACKUP', PHP_OS_FAMILY === 'Windows'),
+        'backup_path' => env('CRITICAL_DATA_BACKUP_PATH'),
     ],
 
 ];

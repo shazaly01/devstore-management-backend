@@ -43,11 +43,13 @@ class ExportCriticalDataJob implements ShouldQueue
 
         $throttleKey = 'panda_critical_data_export_throttle_lock';
 
-        // 2. إذا لم يكن استدعاءً إجبارياً وكان الصمام نشطاً (لم تمر 15 دقيقة منذ آخر تحديث)
+        // 2. التوقف الصامت دون تلويث السجلات إذا كان الملف محدثاً خلال الـ 15 دقيقة الماضية
         if (!$this->isForce && Cache::has($throttleKey)) {
-            Log::info('الزناد الذكي: تم تجاوز تحديث إكسيل الطوارئ لأن الملف محدث بالفعل خلال الـ 15 دقيقة الماضية.');
             return;
         }
+
+        // تأمين مهلة تنفيذ كافية لخادم PHP المحلي عند تعدد المخازن والأصناف
+        @set_time_limit(120);
 
         try {
             $result = $exportService->generateExport();
@@ -55,11 +57,12 @@ class ExportCriticalDataJob implements ShouldQueue
             // قفل الصمام الزمني لمدة 15 دقيقة لمنع تكرار التوليد مع كل فاتورة متتالية
             Cache::put($throttleKey, now()->toDateTimeString(), now()->addMinutes($this->throttleMinutes));
 
-            Log::info("الزناد الذكي: تم تحديث إكسيل الطوارئ بنجاح على سطح المكتب: {$result['path']}");
+            // تسجيل النجاح في وضع التطوير فقط لمنع تضخم ملف السجلات عند العميل
+            if (config('app.debug')) {
+                Log::info("الزناد الذكي: تم تحديث إكسيل الطوارئ بنجاح في المسار: {$result['path']}");
+            }
         } catch (Throwable $e) {
-            Log::error("فشل تنفيذ زناد تصدير الإكسيل الحرج: " . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
-            ]);
+            Log::error("فشل تنفيذ زناد تصدير الإكسيل الحرج: " . $e->getMessage());
         }
     }
 }

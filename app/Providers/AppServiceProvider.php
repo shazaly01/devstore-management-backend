@@ -61,28 +61,26 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // دالة موحدة تضمن جدولة مهمة التحديث مرة واحدة فقط خلال نفس الطلب
+        $triggerEmergencyBackup = function (): void {
+            if ($this->app->bound('panda.emergency_backup_dispatched')) {
+                return;
+            }
+
+            $this->app->instance('panda.emergency_backup_dispatched', true);
+            ExportCriticalDataJob::dispatchAfterResponse();
+        };
+
         // تشغيل الزناد الذكي لتحديث إكسيل الطوارئ بعد حفظ أو إلغاء فواتير المبيعات
-        Sale::saved(function () {
-            ExportCriticalDataJob::dispatchAfterResponse();
-        });
-        Sale::deleted(function () {
-            ExportCriticalDataJob::dispatchAfterResponse();
-        });
+        Sale::saved($triggerEmergencyBackup);
+        Sale::deleted($triggerEmergencyBackup);
 
         // تشغيل الزناد الذكي لتحديث إكسيل الطوارئ بعد حفظ أو إلغاء فواتير المشتريات
-        Purchase::saved(function () {
-            ExportCriticalDataJob::dispatchAfterResponse();
-        });
-        Purchase::deleted(function () {
-            ExportCriticalDataJob::dispatchAfterResponse();
-        });
+        Purchase::saved($triggerEmergencyBackup);
+        Purchase::deleted($triggerEmergencyBackup);
 
         // تشغيل الزناد الذكي لتحديث إكسيل الطوارئ بعد حفظ أو إلغاء سندات القبض والصرف
-        Voucher::saved(function () {
-            ExportCriticalDataJob::dispatchAfterResponse();
-        });
-        Voucher::deleted(function () {
-            ExportCriticalDataJob::dispatchAfterResponse();
-        });
+        Voucher::saved($triggerEmergencyBackup);
+        Voucher::deleted($triggerEmergencyBackup);
     }
 }

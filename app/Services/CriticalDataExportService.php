@@ -14,6 +14,8 @@ use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Border;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use Exception;
 
 class CriticalDataExportService
@@ -24,9 +26,14 @@ class CriticalDataExportService
     protected string $targetDirectory;
 
     /**
-     * اسم الملف واضحاً باللغة العربية ليظهر للعميل مباشرة على سطح المكتب
+     * اسم الملف الأساسي باللغة العربية ليظهر للعميل مباشرة على سطح المكتب
      */
     protected string $fileName = 'أرصدة_العملاء_والمخازن_للطوارئ.xlsx';
+
+    /**
+     * اسم الملف الاحتياطي في حال كان الملف الأساسي مفتوحاً ومقفلاً في Excel لحظة التحديث
+     */
+    protected string $lockedFallbackFileName = 'أرصدة_العملاء_والمخازن_للطوارئ_نسخة_محدثة.xlsx';
 
     public function __construct()
     {
@@ -34,29 +41,47 @@ class CriticalDataExportService
     }
 
     /**
-     * تحديد مسار سطح المكتب بدقة وفق نظام التشغيل ومراعاة OneDrive
+     * تحديد مسار سطح المكتب بدقة وفق نظام التشغيل ومراعاة OneDrive وحسابات النظام
      */
     protected function resolveSafeBackupDirectory(): string
     {
-        // 1. إذا تم تحديد مسار يدوي مخصص داخل ملف .env
-        $customPath = env('CRITICAL_DATA_BACKUP_PATH');
+        // 1. إذا تم تحديد مسار يدوي مخصص عبر ملف الإعدادات
+        $customPath = config('services.emergency_backup.backup_path');
         if (!empty($customPath)) {
-            return rtrim($customPath, '\\/');
+            return rtrim(trim((string) $customPath), '\\/');
         }
 
-        // 2. في بيئة Windows: التوجيه لسطح المكتب مباشرة مع دعم OneDrive
+        // 2. في بيئة Windows: التوجيه لسطح المكتب الفعلي للمستخدم
         if (PHP_OS_FAMILY === 'Windows') {
+            // أ. محاولة قراءة مسار سطح المكتب الفعلي مباشرة من سجل الويندوز (Registry)
+            $registryDesktop = $this->resolveWindowsRegistryDesktop();
+            if (!empty($registryDesktop)) {
+                return $registryDesktop;
+            }
+
+            // ب. فحص متغير USERPROFILE القياسي مع مراعاة OneDrive
             $userProfile = getenv('USERPROFILE') ?: ($_SERVER['USERPROFILE'] ?? null);
-
-            if (!empty($userProfile)) {
-                $oneDriveDesktop = $userProfile . DIRECTORY_SEPARATOR . 'OneDrive' . DIRECTORY_SEPARATOR . 'Desktop';
-                if (File::isDirectory($oneDriveDesktop)) {
-                    return $oneDriveDesktop;
+            if (!empty($userProfile) && stripos($userProfile, 'systemprofile') === false) {
+                $desktopFromProfile = $this->findDesktopInsideUserFolder($userProfile);
+                if (!empty($desktopFromProfile)) {
+                    return $desktopFromProfile;
                 }
+            }
 
-                $localDesktop = $userProfile . DIRECTORY_SEPARATOR . 'Desktop';
-                if (File::isDirectory($localDesktop)) {
-                    return $localDesktop;
+            // ج. في حال التشغيل تحت حساب نظام (systemprofile): البحث في مجلدات المستخدمين الفعلية
+            $usersRoot = 'C:\\Users';
+            if (File::isDirectory($usersRoot)) {
+                $ignoredFolders = ['Public', 'Default', 'Default User', 'All Users'];
+                foreach (File::directories($usersRoot) as $userDir) {
+                    $folderName = basename($userDir);
+                    if (in_array($folderName, $ignoredFolders, true)) {
+                        continue;
+                    }
+
+                    $desktopPath = $this->findDesktopInsideUserFolder($userDir);
+                    if (!empty($desktopPath)) {
+                        return $desktopPath;
+                    }
                 }
             }
         }
@@ -66,7 +91,61 @@ class CriticalDataExportService
     }
 
     /**
-     * توليد وتحديث ملف الإكسيل الحرج
+     * قراءة مسار سطح المكتب النشط من سجل الويندوز وتوسيع متغيرات البيئة فيه
+     */
+    protected function resolveWindowsRegistryDesktop(): ?string
+    {
+        if (!function_exists('shell_exec')) {
+            return null;
+        }
+
+        $output = @shell_exec('reg query "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders" /v Desktop 2>nul');
+        if (empty($output)) {
+            return null;
+        }
+
+        if (preg_match('/Desktop\s+REG_(?:EXPAND_)?SZ\s+(.+)/i', $output, $matches)) {
+            $rawPath = trim($matches[1]);
+            $expandedPath = preg_replace_callback('/%([^%]+)%/', function ($varMatch) {
+                $varName = $varMatch[1];
+                return getenv($varName) ?: ($_SERVER[$varName] ?? $varMatch[0]);
+            }, $rawPath);
+
+            $cleanPath = rtrim($expandedPath, '\\/');
+            if (
+                !empty($cleanPath) &&
+                stripos($cleanPath, 'systemprofile') === false &&
+                File::isDirectory($cleanPath)
+            ) {
+                return $cleanPath;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * التحقق من وجود مجلد سطح المكتب (سواء عبر OneDrive أو المحلي) داخل مجلد المستخدم
+     */
+    protected function findDesktopInsideUserFolder(string $userFolder): ?string
+    {
+        $cleanUserFolder = rtrim($userFolder, '\\/');
+
+        $oneDriveDesktop = $cleanUserFolder . DIRECTORY_SEPARATOR . 'OneDrive' . DIRECTORY_SEPARATOR . 'Desktop';
+        if (File::isDirectory($oneDriveDesktop)) {
+            return $oneDriveDesktop;
+        }
+
+        $localDesktop = $cleanUserFolder . DIRECTORY_SEPARATOR . 'Desktop';
+        if (File::isDirectory($localDesktop)) {
+            return $localDesktop;
+        }
+
+        return null;
+    }
+
+    /**
+     * توليد وتحديث ملف الإكسيل الحرج بأمان تام عبر مسار مؤقت إنجليزي ثم النسخ إلى سطح المكتب
      *
      * @return array
      * @throws Exception
@@ -77,7 +156,14 @@ class CriticalDataExportService
             File::makeDirectory($this->targetDirectory, 0755, true, true);
         }
 
-        $filePath = $this->targetDirectory . DIRECTORY_SEPARATOR . $this->fileName;
+        $tempDir = storage_path('app' . DIRECTORY_SEPARATOR . 'temp');
+        if (!File::exists($tempDir)) {
+            File::makeDirectory($tempDir, 0755, true, true);
+        }
+
+        $tempFilePath = $tempDir . DIRECTORY_SEPARATOR . 'panda_emergency_backup_' . uniqid('', true) . '.xlsx';
+        $primaryFilePath = $this->targetDirectory . DIRECTORY_SEPARATOR . $this->fileName;
+        $fallbackFilePath = $this->targetDirectory . DIRECTORY_SEPARATOR . $this->lockedFallbackFileName;
 
         $spreadsheet = new Spreadsheet();
         $spreadsheet->removeSheetByIndex(0);
@@ -95,14 +181,28 @@ class CriticalDataExportService
         $spreadsheet->setActiveSheetIndex(0);
 
         try {
+            // الكتابة أولاً في مسار مؤقت إنجليزي لتجنب تعارض ZipArchive مع المسارات والأسماء العربية
             $writer = new Xlsx($spreadsheet);
-            $writer->save($filePath);
+            $writer->save($tempFilePath);
+
+            // نسخ الملف المولد إلى سطح المكتب مع معالجة حالة فتح الملف في Excel لدى العميل
+            $savedPath = $primaryFilePath;
+            $savedFileName = $this->fileName;
+
+            if (!@copy($tempFilePath, $primaryFilePath)) {
+                if (@copy($tempFilePath, $fallbackFilePath)) {
+                    $savedPath = $fallbackFilePath;
+                    $savedFileName = $this->lockedFallbackFileName;
+                } else {
+                    throw new Exception("تعذر نسخ ملف الإكسيل إلى المسار المستهدف: {$primaryFilePath}");
+                }
+            }
 
             return [
                 'success'   => true,
-                'path'      => $filePath,
+                'path'      => $savedPath,
                 'directory' => $this->targetDirectory,
-                'filename'  => $this->fileName,
+                'filename'  => $savedFileName,
                 'date'      => now()->format('Y-m-d H:i:s'),
             ];
         } catch (Exception $e) {
@@ -111,6 +211,10 @@ class CriticalDataExportService
         } finally {
             $spreadsheet->disconnectWorksheets();
             unset($spreadsheet);
+
+            if (File::exists($tempFilePath)) {
+                @unlink($tempFilePath);
+            }
         }
     }
 
@@ -158,8 +262,11 @@ class CriticalDataExportService
             $sheet->setCellValue("G{$rowIndex}", $currentBalance);
             $sheet->setCellValue("H{$rowIndex}", $nature);
 
-            $this->applyRowStyle($sheet, $rowIndex, 8, $index % 2 === 0);
             $rowIndex++;
+        }
+
+        if ($rowIndex > 2) {
+            $this->applyDataRangeStyle($sheet, 2, $rowIndex - 1, 8);
         }
 
         $this->autoFitColumns($sheet, range('A', 'H'));
@@ -209,8 +316,11 @@ class CriticalDataExportService
             $sheet->setCellValue("G{$rowIndex}", $currentBalance);
             $sheet->setCellValue("H{$rowIndex}", $nature);
 
-            $this->applyRowStyle($sheet, $rowIndex, 8, $index % 2 === 0);
             $rowIndex++;
+        }
+
+        if ($rowIndex > 2) {
+            $this->applyDataRangeStyle($sheet, 2, $rowIndex - 1, 8);
         }
 
         $this->autoFitColumns($sheet, range('A', 'H'));
@@ -233,11 +343,18 @@ class CriticalDataExportService
             return;
         }
 
+        $usedTitles = [];
+
         foreach ($stores as $store) {
-            $safeTitle = mb_substr(preg_replace('/[\\\\\/*?:\[\]]/', '', $store->name), 0, 28);
-            if (empty(trim($safeTitle))) {
+            $safeTitle = trim(mb_substr(preg_replace('/[\\\\\/*?:\[\]]/', '', (string) $store->name), 0, 25));
+            if (empty($safeTitle)) {
                 $safeTitle = "مخزن {$store->id}";
             }
+
+            if (in_array($safeTitle, $usedTitles, true)) {
+                $safeTitle = mb_substr($safeTitle, 0, 22) . " ({$store->id})";
+            }
+            $usedTitles[] = $safeTitle;
 
             $this->buildSingleItemsSheet($spreadsheet, $safeTitle, $items, $store->id);
         }
@@ -292,17 +409,20 @@ class CriticalDataExportService
 
             $sheet->setCellValue("A{$rowIndex}", $index + 1);
             $sheet->setCellValue("B{$rowIndex}", $item->id);
-            $sheet->setCellValueExplicit("C{$rowIndex}", $barcodeText, \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_STRING);
+            $sheet->setCellValueExplicit("C{$rowIndex}", $barcodeText, DataType::TYPE_STRING);
             $sheet->setCellValue("D{$rowIndex}", $item->name);
-            $sheet->setCellValue("E{$rowIndex}", $item->category->name ?? '—');
-            $sheet->setCellValue("F{$rowIndex}", $item->baseUnit->name ?? '—');
+            $sheet->setCellValue("E{$rowIndex}", $item->category?->name ?? '—');
+            $sheet->setCellValue("F{$rowIndex}", $item->baseUnit?->name ?? '—');
             $sheet->setCellValue("G{$rowIndex}", $unitPrice);
             $sheet->setCellValue("H{$rowIndex}", $quantity);
             $sheet->setCellValue("I{$rowIndex}", $totalSaleValue);
             $sheet->setCellValue("J{$rowIndex}", $status);
 
-            $this->applyRowStyle($sheet, $rowIndex, 10, $index % 2 === 0);
             $rowIndex++;
+        }
+
+        if ($rowIndex > 2) {
+            $this->applyDataRangeStyle($sheet, 2, $rowIndex - 1, 10);
         }
 
         $this->autoFitColumns($sheet, range('A', 'J'));
@@ -341,22 +461,16 @@ class CriticalDataExportService
     }
 
     /**
-     * تنسيق أسطر البيانات ومحاذاتها
+     * تنسيق نطاق البيانات بالكامل دفعة واحدة لتسريع التوليد وتقليل استهلاك الذاكرة
      */
-    protected function applyRowStyle($sheet, int $rowIndex, int $totalColumns, bool $isEven): void
+    protected function applyDataRangeStyle($sheet, int $startRow, int $endRow, int $totalColumns): void
     {
-        $lastColumnLetter = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($totalColumns);
-        $range = "A{$rowIndex}:{$lastColumnLetter}{$rowIndex}";
+        $lastColumnLetter = Coordinate::stringFromColumnIndex($totalColumns);
+        $fullRange = "A{$startRow}:{$lastColumnLetter}{$endRow}";
 
-        $bgColor = $isEven ? 'F9FAFB' : 'FFFFFF';
-
-        $sheet->getStyle($range)->applyFromArray([
+        $sheet->getStyle($fullRange)->applyFromArray([
             'alignment' => [
                 'vertical' => Alignment::VERTICAL_CENTER,
-            ],
-            'fill' => [
-                'fillType'   => Fill::FILL_SOLID,
-                'startColor' => ['rgb' => $bgColor],
             ],
             'borders' => [
                 'allBorders' => [
@@ -366,7 +480,17 @@ class CriticalDataExportService
             ],
         ]);
 
-        $sheet->getRowDimension($rowIndex)->setRowHeight(22);
+        for ($row = $startRow; $row <= $endRow; $row++) {
+            $sheet->getRowDimension($row)->setRowHeight(22);
+
+            if ($row % 2 === 0) {
+                $sheet->getStyle("A{$row}:{$lastColumnLetter}{$row}")
+                    ->getFill()
+                    ->setFillType(Fill::FILL_SOLID)
+                    ->getStartColor()
+                    ->setRGB('F9FAFB');
+            }
+        }
     }
 
     /**
