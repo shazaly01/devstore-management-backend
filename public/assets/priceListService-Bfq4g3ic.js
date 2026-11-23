@@ -1,1 +1,0 @@
-import{D as t}from"./index-BHMg50du.js";const r="/price-lists",i={get(e={}){return t.get(r,{params:e})},find(e){return t.get(`${r}/${e}`)},create(e){return t.post(r,e)},update(e,p){return t.put(`${r}/${e}`,p)},delete(e){return t.delete(`${r}/${e}`)}};export{i as p};

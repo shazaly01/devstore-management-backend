@@ -1,1 +1,0 @@
-import{f as o,o as e,H as s}from"./index-BHMg50du.js";const t={class:"w-full p-6 bg-surface-section rounded-xl border border-surface-border shadow-sm transition-colors duration-200"},d={__name:"AppCard",setup(a){return(r,n)=>(e(),o("div",t,[s(r.$slots,"default")]))}};export{d as _};
